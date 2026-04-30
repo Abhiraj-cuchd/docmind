@@ -1,0 +1,7 @@
+# requests already in shared layer (sarvam.py, hyde.py)
+# supabase already in shared layer (history.py, supabase_client.py)
+# boto3 already in shared layer (voice S3 upload in handler.py)
+# upstash-redis already in shared layer (rate_limiter.py)
+# PyJWT + cryptography already in shared layer (auth.py)
+
+# No additional deps needed — processor only uses shared layer packages

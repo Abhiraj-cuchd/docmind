@@ -1,0 +1,2 @@
+# All dependencies provided by shared Lambda layer
+# See lambdas/shared/requirements.txt

@@ -1,0 +1,8 @@
+# Ingestion-specific deps only
+# boto3, supabase, PyJWT etc. come from shared_lambda/requirements.txt
+# No voyageai — using Amazon Titan via boto3 bedrock-runtime
+
+pymupdf==1.24.0
+langchain==0.2.0
+langchain-text-splitters==0.2.0
+requests==2.31.0

@@ -1,0 +1,75 @@
+'use client';
+
+import { useCallback, useEffect, useState } from 'react';
+import { supabaseFetch } from '@/lib/supabase';
+import { Conversation } from '@/lib/types';
+import { v4 as uuidv4 } from 'uuid';
+import { supabase } from '@/lib/supabase';
+
+interface UseConversationsReturn {
+  conversations: Conversation[];
+  loading: boolean;
+  error: string | null;
+  createConversation: (title?: string) => Promise<Conversation | null>;
+  refresh: () => void;
+}
+
+export function useConversations(): UseConversationsReturn {
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchConversations = useCallback(async () => {
+    try {
+      const data = await supabaseFetch<Conversation[]>(
+        'conversations?order=updated_at.desc'
+      );
+      setConversations(data);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load conversations');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchConversations();
+  }, [fetchConversations]);
+
+  const createConversation = useCallback(async (title = 'New Conversation'): Promise<Conversation | null> => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return null;
+
+      const newConv: Partial<Conversation> = {
+        id: uuidv4(),
+        user_id: session.user.id,
+        title,
+      };
+
+      const result = await supabaseFetch<Conversation[]>('conversations', {
+        method: 'POST',
+        headers: {
+          'Prefer': 'return=representation',
+        },
+        body: JSON.stringify(newConv),
+      });
+
+      const created = Array.isArray(result) ? result[0] : result;
+      setConversations(prev => [created, ...prev]);
+      return created;
+    } catch (err) {
+      console.error('Failed to create conversation:', err);
+      return null;
+    }
+  }, []);
+
+  return {
+    conversations,
+    loading,
+    error,
+    createConversation,
+    refresh: fetchConversations,
+  };
+}
