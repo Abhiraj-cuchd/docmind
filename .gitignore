@@ -14,3 +14,4 @@ __pycache__/
 *.swp
 frontend/node_modules
 infrastructure/cdk.out
+__tests__/
