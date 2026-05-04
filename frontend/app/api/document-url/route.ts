@@ -1,6 +1,5 @@
 // app/api/document-url/route.ts
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'  // ← server client
 
 const API_ENDPOINT = process.env.NEXT_PUBLIC_API_ENDPOINT
 
@@ -35,7 +34,7 @@ export async function GET(request: NextRequest) {
     const data = await res.json()
     return NextResponse.json(data, { status: res.status })
 
-  } catch (e) {
+  } catch {
     return NextResponse.json(
       { error: 'Failed to fetch document URL' },
       { status: 500 }

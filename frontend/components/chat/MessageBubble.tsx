@@ -2,7 +2,6 @@
 
 import { Message } from '@/lib/types';
 import { Citations } from './Citations';
-import { Badge } from '@/components/ui/badge';
 import { SpeakerHigh } from '@phosphor-icons/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
@@ -10,7 +9,6 @@ import { formatDistanceToNow } from 'date-fns';
 
 interface MessageBubbleProps {
   message: Message;
-  voiceMode?: boolean;
   isStreaming?: boolean;
   onStreamComplete?: (messageId: string) => void;
   onStreamProgress?: () => void;
@@ -23,7 +21,7 @@ const PATH_LABELS: Record<string, { label: string; color: string }> = {
   conversational: { label: 'Chat', color: 'bg-amber-500/15 text-amber-400 border-amber-500/20' },
 };
 
-export function MessageBubble({ message, voiceMode, isStreaming, onStreamComplete, onStreamProgress }: MessageBubbleProps) {
+export function MessageBubble({ message, isStreaming, onStreamComplete, onStreamProgress }: MessageBubbleProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const isUser = message.role === 'user';
   const pathInfo = message.path ? PATH_LABELS[message.path] : null;

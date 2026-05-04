@@ -33,18 +33,18 @@ export function UploadZone({ onUploadComplete, compact }: UploadZoneProps) {
     return null;
   };
 
-  const handleFileSelect = (file: File) => {
+  const handleFileSelect = useCallback((file: File) => {
     const err = validateFile(file);
     if (err) { toast.error(err); return; }
     setSelectedFile(file);
-  };
+  }, []);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
     const file = e.dataTransfer.files[0];
     if (file) handleFileSelect(file);
-  }, []);
+  }, [handleFileSelect]);
 
   const handleUpload = async () => {
     if (!selectedFile || !user) return;

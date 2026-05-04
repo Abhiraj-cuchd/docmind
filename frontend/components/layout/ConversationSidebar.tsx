@@ -13,7 +13,7 @@ interface ConversationSidebarProps {
   conversations: Conversation[];
   loading: boolean;
   activeId: string | null;
-  onSelect: (id: string) => void;
+  onSelect: (conversation: Conversation) => void;
   onNew: () => void;
 }
 
@@ -75,7 +75,7 @@ export function ConversationSidebar({
             conversations.map(conv => (
               <button
                 key={conv.id}
-                onClick={() => onSelect(conv.id)}
+                onClick={() => onSelect(conv)}
                 className={cn(
                   'w-full text-left px-3 py-2.5 rounded-xl transition-all duration-150 group',
                   activeId === conv.id

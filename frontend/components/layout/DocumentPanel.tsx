@@ -257,7 +257,7 @@ export default function DocumentPanel({
     }
 
     fetchUrl()
-  }, [previewDoc])
+  }, [previewDoc, supabase])
 
   // ── Handle card selection ────────────────────────────────────────
   const handleSelect = useCallback((doc: Document) => {

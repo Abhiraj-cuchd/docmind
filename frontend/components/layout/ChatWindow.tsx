@@ -57,13 +57,23 @@ import { VoiceToggle } from '@/components/chat/VoiceToggle';
 
 import { toast } from 'sonner';
 import { v4 as uuidv4 } from 'uuid';
-import { ChatCircleDots } from '@phosphor-icons/react';
+import { ArrowLeft, ChatCircleDots } from '@phosphor-icons/react';
 
 interface ChatWindowProps {
   conversationId: string | null;
+  documentId?: string | null;
+  createConversation?: (title: string, documentId?: string) => Promise<import('@/lib/types').Conversation | null>;
+  onConversationCreated?: (id: string) => void;
+  onBack?: () => void;
 }
 
-function ChatWindowInner({ conversationId }: ChatWindowProps) {
+function ChatWindowInner({
+  conversationId,
+  documentId,
+  createConversation,
+  onConversationCreated,
+  onBack,
+}: ChatWindowProps) {
   const { messages, loading, addMessage } = useMessages(conversationId);
   const { submit, isLoading, isPolling, abort } = useRAGQuery();
   const [voiceMode, setVoiceMode] = useState(false);
@@ -93,15 +103,30 @@ function ChatWindowInner({ conversationId }: ChatWindowProps) {
   }, [abort]);
 
   const handleSubmit = async (question: string) => {
-    if (!conversationId) {
-      toast.error('Please select or create a conversation first');
-      return;
+    let convId = conversationId;
+
+    if (!convId) {
+      if (!documentId || !createConversation) {
+        toast.error('Select a document to start chatting');
+        return;
+      }
+
+      const raw = question.trim();
+      const title = raw.length > 40 ? `${raw.slice(0, 40).trimEnd()}…` : (raw || 'New Conversation');
+      const conv = await createConversation(title, documentId);
+      if (!conv) {
+        toast.error('Failed to create conversation');
+        return;
+      }
+
+      convId = conv.id;
+      onConversationCreated?.(convId);
     }
 
     // Optimistic user message
     const userMsg: Message = {
       id: uuidv4(),
-      conversation_id: conversationId,
+      conversation_id: convId,
       role: 'user',
       content: question,
       created_at: new Date().toISOString(),
@@ -109,7 +134,7 @@ function ChatWindowInner({ conversationId }: ChatWindowProps) {
     addMessage(userMsg);
 
     try {
-      const result = await submit({ question, conversation_id: conversationId, voice_mode: voiceMode });
+      const result = await submit({ question, conversation_id: convId, voice_mode: voiceMode });
       if (!result) return;
 
       // Update voice credits if returned
@@ -119,7 +144,7 @@ function ChatWindowInner({ conversationId }: ChatWindowProps) {
 
       const assistantMsg: Message = {
         id: uuidv4(),
-        conversation_id: conversationId,
+        conversation_id: convId,
         role: 'assistant',
         content: result.answer,
         sources: result.sources,
@@ -150,10 +175,31 @@ function ChatWindowInner({ conversationId }: ChatWindowProps) {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-border/50 flex items-center justify-between bg-background/50 backdrop-blur-sm">
+      <div
+        className={`px-4 py-3 border-b flex items-center justify-between backdrop-blur-sm ${
+          voiceMode
+            ? 'bg-primary/5 border-primary/30 shadow-[0_0_0_1px_rgba(59,130,246,0.2)]'
+            : 'bg-background/50 border-border/50'
+        }`}
+      >
         <div className="flex items-center gap-2">
+          {onBack && (
+            <button
+              onClick={onBack}
+              className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
+              aria-label="Back to document selector"
+              title="Back to document selector"
+            >
+              <ArrowLeft className="size-4" />
+            </button>
+          )}
           <ChatCircleDots className="size-4 text-muted-foreground" />
           <h2 className="text-sm font-medium">Chat</h2>
+          {voiceMode && (
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-primary bg-primary/15 border border-primary/30 px-2 py-0.5 rounded-full">
+              Voice mode
+            </span>
+          )}
           {(isLoading || isPolling) && (
             <span className="text-[10px] text-primary/70 animate-pulse">
               {isPolling ? 'Searching documents…' : 'Thinking…'}
@@ -187,7 +233,6 @@ function ChatWindowInner({ conversationId }: ChatWindowProps) {
               <MessageBubble
                 key={msg.id}
                 message={msg}
-                voiceMode={voiceMode}
                 isStreaming={msg.id === streamingMessageId && msg.role === 'assistant'}
                 onStreamComplete={(id) => {
                   if (id === streamingMessageId) {
@@ -209,17 +254,29 @@ function ChatWindowInner({ conversationId }: ChatWindowProps) {
         onSubmit={handleSubmit}
         onAbort={abort}
         isLoading={isLoading || isPolling}
-        disabled={!conversationId}
-        placeholder={!conversationId ? 'Select a conversation to start chatting…' : undefined}
+        disabled={!conversationId && !documentId}
+        placeholder={
+          !conversationId && !documentId
+            ? 'Select a document to start chatting…'
+            : !conversationId
+              ? 'Ask a question to start this conversation…'
+              : undefined
+        }
       />
     </div>
   );
 }
 
-export function ChatWindow({ conversationId }: ChatWindowProps) {
+export function ChatWindow({ conversationId, documentId, createConversation, onConversationCreated, onBack }: ChatWindowProps) {
   return (
     <ChatErrorBoundary>
-      <ChatWindowInner conversationId={conversationId} />
+      <ChatWindowInner
+        conversationId={conversationId}
+        documentId={documentId}
+        createConversation={createConversation}
+        onConversationCreated={onConversationCreated}
+        onBack={onBack}
+      />
     </ChatErrorBoundary>
   );
 }

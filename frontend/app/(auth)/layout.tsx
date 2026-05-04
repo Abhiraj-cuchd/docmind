@@ -1,3 +1,5 @@
+import { AuthGoogleButton } from '@/components/auth/AuthGoogleButton';
+
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background px-4">
@@ -13,6 +15,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           <p className="text-muted-foreground text-sm mt-1">AI-powered document intelligence</p>
         </div>
         {children}
+        <AuthGoogleButton />
       </div>
     </div>
   );

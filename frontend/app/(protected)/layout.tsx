@@ -1,8 +1,12 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
+import { ConversationSidebar } from '@/components/layout/ConversationSidebar';
+import { useConversations } from '@/hooks/useConversations';
+import { ConversationSelectionProvider, useConversationSelection } from '@/components/providers/ConversationSelectionProvider';
+import { Conversation } from '@/lib/types';
 
 export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -27,5 +31,45 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
 
   if (!user) return null;
 
-  return <>{children}</>;
+  return (
+    <ConversationSelectionProvider>
+      <ProtectedShell>{children}</ProtectedShell>
+    </ConversationSelectionProvider>
+  );
+}
+
+function ProtectedShell({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+  const { conversations, loading } = useConversations();
+  const { selection, setSelection, clearSelection } = useConversationSelection();
+
+  const handleSelectConversation = useCallback((conversation: Conversation) => {
+    setSelection({
+      conversationId: conversation.id,
+      documentId: conversation.document_id ?? null,
+    });
+    router.push('/chat');
+  }, [router, setSelection]);
+
+  const handleNewConversation = useCallback(() => {
+    clearSelection();
+    router.push('/dashboard');
+  }, [clearSelection, router]);
+
+  return (
+    <div className="flex h-screen overflow-hidden bg-background">
+      <aside className="w-[20%] min-w-[200px] max-w-[280px] h-full flex-shrink-0">
+        <ConversationSidebar
+          conversations={conversations}
+          loading={loading}
+          activeId={selection.conversationId}
+          onSelect={handleSelectConversation}
+          onNew={handleNewConversation}
+        />
+      </aside>
+      <main className="flex-1 min-w-0 h-full">
+        {children}
+      </main>
+    </div>
+  );
 }

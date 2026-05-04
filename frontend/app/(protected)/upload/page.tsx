@@ -1,11 +1,9 @@
 'use client';
 
-import { useState } from 'react';
 import { useDocuments } from '@/hooks/useDocuments';
 import { UploadZone } from '@/components/documents/UploadZone';
 import { DocumentCard } from '@/components/documents/DocumentCard';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Files } from '@phosphor-icons/react';
 import Link from 'next/link';
@@ -24,10 +22,10 @@ export default function UploadPage() {
     <div className="min-h-screen bg-background">
       {/* Top bar */}
       <header className="border-b border-border/50 px-6 py-4 flex items-center gap-4 bg-card/50 backdrop-blur-sm">
-        <Link href="/chat">
+        <Link href="/dashboard">
           <Button variant="ghost" size="sm" className="gap-2 text-muted-foreground hover:text-foreground">
             <ArrowLeft className="size-4" />
-            Back to chat
+            Back
           </Button>
         </Link>
         <div className="h-4 w-px bg-border" />

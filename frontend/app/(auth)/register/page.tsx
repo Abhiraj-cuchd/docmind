@@ -17,6 +17,7 @@ export default function RegisterPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
+
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -110,6 +111,7 @@ export default function RegisterPage() {
           {loading ? 'Creating account…' : 'Create account'}
         </Button>
       </form>
+
 
       <p className="text-center text-sm text-muted-foreground mt-6">
         Already have an account?{' '}

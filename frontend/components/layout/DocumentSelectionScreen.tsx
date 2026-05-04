@@ -1,10 +1,12 @@
 'use client'
 
 import { useDocuments } from '@/hooks/useDocuments'
+import { useAuth } from '@/hooks/useAuth'
+import { useMemo, useState } from 'react'
 import { Document } from '@/lib/types'
 import {
   FileText, Upload, CheckCircle, AlertCircle,
-  Loader2, Hash, ArrowRight, RefreshCw
+  Loader2, Hash, ArrowRight, RefreshCw, User, ChevronDown
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
@@ -131,34 +133,79 @@ function SkeletonCard({ index }: { index: number }) {
 
 export function DocumentSelectionScreen({ onSelect }: Props) {
   const { documents, loading, refresh } = useDocuments()
+  const { user } = useAuth()
+  const [agentOpen, setAgentOpen] = useState(false)
+  const [agentValue, setAgentValue] = useState('rag')
+  const agentOptions = useMemo(() => (
+    [
+      { value: 'rag', label: 'RAG Agent' },
+      { value: 'travel', label: 'Travel Planner Agent' },
+      { value: 'hr', label: 'HR Assistant (Org Scoped)' },
+      { value: 'diet', label: 'Diet Planner Agent' },
+      { value: 'citation', label: 'Citation Finder Agent' },
+    ]
+  ), [])
+  const activeAgentLabel = agentOptions.find(option => option.value === agentValue)?.label ?? 'RAG Agent'
   const readyCount = documents.filter(d => d.status === 'ready').length
+  const displayName =
+    (user?.user_metadata?.full_name as string | undefined) ??
+    (user?.user_metadata?.name as string | undefined) ??
+    user?.email?.split('@')[0] ??
+    'User'
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
 
       {/* ── Header ─────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-10 border-b border-border/50 bg-background/80 backdrop-blur-md">
-        <div className="max-w-5xl mx-auto px-6 h-16 flex items-center justify-between">
-
-          {/* Branding */}
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                <path
-                  d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="text-primary"
-                />
-              </svg>
+        <div className="w-full px-6 h-16 flex items-center justify-start gap-4">
+          <div className="flex items-center gap-2">
+            <label htmlFor="agent-selector" className="text-xs text-muted-foreground">
+              Choose Your Agent:
+            </label>
+            <div className="relative">
+              <button
+                id="agent-selector"
+                type="button"
+                onClick={() => setAgentOpen(prev => !prev)}
+                className="h-9 min-w-[260px] rounded-xl border border-primary/40 bg-primary/10 px-3 text-sm text-foreground text-left shadow-sm shadow-primary/10 focus:outline-none focus:ring-2 focus:ring-primary/40"
+                aria-haspopup="listbox"
+                aria-expanded={agentOpen}
+              >
+                <span className="flex items-center justify-between gap-2">
+                  <span className="font-semibold">{activeAgentLabel}</span>
+                  <ChevronDown className={cn('w-4 h-4 text-primary transition-transform', agentOpen && 'rotate-180')} />
+                </span>
+              </button>
+              {agentOpen && (
+                <div
+                  role="listbox"
+                  className="absolute left-0 mt-2 w-full rounded-xl border border-border bg-popover shadow-xl z-20 overflow-hidden"
+                >
+                  {agentOptions.map(option => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="option"
+                      aria-selected={option.value === agentValue}
+                      onMouseDown={() => {
+                        setAgentValue(option.value)
+                        setAgentOpen(false)
+                      }}
+                      className={cn(
+                        'w-full text-left px-3 py-2.5 text-sm hover:bg-accent transition-colors',
+                        option.value === agentValue && 'bg-accent text-foreground'
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-            <span className="text-sm font-bold gradient-text">DocMind</span>
           </div>
 
-          {/* Actions */}
-          <div className="flex items-center gap-2">
+          <div className="ml-auto flex items-center gap-2">
             <button
               onClick={refresh}
               className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
@@ -171,12 +218,25 @@ export function DocumentSelectionScreen({ onSelect }: Props) {
                 Upload
               </Button>
             </Link>
+            <div className="flex items-center gap-2 px-2 py-1 rounded-lg border border-border bg-card/60">
+              <div className="w-7 h-7 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center">
+                <User className="w-4 h-4 text-primary" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-medium text-foreground truncate max-w-[140px]">
+                  {displayName}
+                </p>
+                <p className="text-[10px] text-muted-foreground truncate max-w-[140px]">
+                  {user?.email ?? 'No email'}
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       </header>
 
       {/* ── Main ───────────────────────────────────────────────────── */}
-      <main className="flex-1 max-w-5xl mx-auto w-full px-6 py-12">
+      <main className="flex-1 w-full px-6 py-12">
 
         {/* Page heading */}
         <div

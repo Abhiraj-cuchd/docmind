@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabaseFetch } from '@/lib/supabase';
 import { Document } from '@/lib/types';
-import { supabase } from '@/lib/supabase';
 import { v4 as uuidv4 } from 'uuid';
 
 const POLL_INTERVAL_MS = 5000;
