@@ -16,9 +16,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'DocMind — AI Document Assistant',
+  title: 'MindAgent — Your Agentic Friend',
   description: 'Upload documents and ask questions powered by RAG (Retrieval-Augmented Generation).',
-  keywords: ['RAG', 'AI', 'document assistant', 'DocMind'],
+  keywords: ['RAG', 'AI', 'document assistant', 'MindAgent'],
 };
 
 export default function RootLayout({
