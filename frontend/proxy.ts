@@ -27,6 +27,14 @@ export async function proxy(request: NextRequest) {
     const pathname = request.nextUrl.pathname
 
     if (
+  pathname.startsWith('/login') ||
+  pathname.startsWith('/register') ||
+  pathname.startsWith('/auth')
+) {
+  return NextResponse.next()
+}
+
+    if (
       !user &&
       !pathname.startsWith('/login') &&
       !pathname.startsWith('/register') &&
@@ -35,6 +43,8 @@ export async function proxy(request: NextRequest) {
     ) {
       return NextResponse.redirect(new URL('/login', request.url))
     }
+
+
 
     return response
   } catch (err) {
@@ -47,6 +57,6 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|auth|login|register|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }
