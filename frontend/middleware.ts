@@ -1,7 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-export async function proxy(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const response = NextResponse.next()
 
   const supabase = createServerClient(
@@ -27,12 +27,12 @@ export async function proxy(request: NextRequest) {
     const pathname = request.nextUrl.pathname
 
     if (
-  pathname.startsWith('/login') ||
-  pathname.startsWith('/register') ||
-  pathname.startsWith('/auth')
-) {
-  return NextResponse.next()
-}
+      pathname.startsWith('/login') ||
+      pathname.startsWith('/register') ||
+      pathname.startsWith('/auth')
+    ) {
+      return NextResponse.next()
+    }
 
     if (
       !user &&
@@ -44,13 +44,9 @@ export async function proxy(request: NextRequest) {
       return NextResponse.redirect(new URL('/login', request.url))
     }
 
-
-
     return response
   } catch (err) {
     console.error('Middleware error:', err)
-
-    // ⚠️ Never crash middleware
     return NextResponse.next()
   }
 }
