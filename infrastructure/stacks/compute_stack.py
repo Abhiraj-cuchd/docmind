@@ -197,7 +197,10 @@ class ComputeStack(cdk.Stack):
         self.submit_function.add_to_role_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
-                actions=["s3:PutObject"],
+                actions=[
+                    "s3:PutObject",  # already there for upload
+                    "s3:GetObject",  # new — for presigned GET URLs
+                ],
                 resources=[f"{pdf_bucket.bucket_arn}/uploads/*"],
             )
         )

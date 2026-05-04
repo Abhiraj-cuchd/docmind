@@ -68,7 +68,19 @@ function ChatWindowInner({ conversationId }: ChatWindowProps) {
   const { submit, isLoading, isPolling, abort } = useRAGQuery();
   const [voiceMode, setVoiceMode] = useState(false);
   const [voiceCredits, setVoiceCredits] = useState<number | undefined>(undefined);
+  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  const playVoiceSequence = async (urls: string[]) => {
+    for (const url of urls) {
+      await new Promise<void>((resolve, reject) => {
+        const audio = new Audio(url);
+        audio.onended = () => resolve();
+        audio.onerror = () => reject(new Error('Audio playback failed'));
+        audio.play().catch(reject);
+      });
+    }
+  };
 
   // Auto-scroll on new messages
   useEffect(() => {
@@ -112,6 +124,7 @@ function ChatWindowInner({ conversationId }: ChatWindowProps) {
         content: result.answer,
         sources: result.sources,
         voice_url: result.voice_url,
+        voice_urls: result.voice_urls,
         voice_credits_remaining: result.voice_credits_remaining,
         tokens_used: result.tokens_used,
         path: result.path,
@@ -119,10 +132,15 @@ function ChatWindowInner({ conversationId }: ChatWindowProps) {
         created_at: new Date().toISOString(),
       };
       addMessage(assistantMsg);
+      setStreamingMessageId(assistantMsg.id);
 
       // Auto-play voice if voice_url present and voice mode on
-      if (voiceMode && result.voice_url) {
-        new Audio(result.voice_url).play().catch(() => {});
+      if (voiceMode) {
+        if (result.voice_urls && result.voice_urls.length > 0) {
+          void playVoiceSequence(result.voice_urls).catch(() => {});
+        } else if (result.voice_url) {
+          new Audio(result.voice_url).play().catch(() => {});
+        }
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Query failed');
@@ -166,7 +184,18 @@ function ChatWindowInner({ conversationId }: ChatWindowProps) {
             </div>
           ) : (
             messages.map(msg => (
-              <MessageBubble key={msg.id} message={msg} voiceMode={voiceMode} />
+              <MessageBubble
+                key={msg.id}
+                message={msg}
+                voiceMode={voiceMode}
+                isStreaming={msg.id === streamingMessageId && msg.role === 'assistant'}
+                onStreamComplete={(id) => {
+                  if (id === streamingMessageId) {
+                    setStreamingMessageId(null);
+                  }
+                }}
+                onStreamProgress={() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' })}
+              />
             ))
           )}
 

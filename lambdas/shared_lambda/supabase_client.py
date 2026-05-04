@@ -96,7 +96,8 @@ def execute_hybrid_search(
     user_id:         str,
     query_embedding: list[float],
     query_text:      str,
-    match_count:     int = 10
+    match_count:     int = 10,
+    document_id:     str | None = None,
 ) -> list[dict]:
     """
     Calls the hybrid_search SQL function we wrote in 006_functions.sql.
@@ -109,15 +110,27 @@ def execute_hybrid_search(
     """
     client = get_service_client()
 
-    result = client.schema("rag").rpc(
-        "hybrid_search",
-        {
-            "query_embedding": query_embedding,
-            "query_text":      query_text,
-            "target_user_id":  user_id,
-            "match_count":     match_count,
-        }
-    ).execute()
+    if document_id:
+        result = client.schema("rag").rpc(
+            "hybrid_search_in_document",
+            {
+                "query_embedding":    query_embedding,
+                "query_text":         query_text,
+                "target_user_id":     user_id,
+                "target_document_id": document_id,
+                "match_count":        match_count,
+            }
+        ).execute()
+    else:
+        result = client.schema("rag").rpc(
+            "hybrid_search",
+            {
+                "query_embedding": query_embedding,
+                "query_text":      query_text,
+                "target_user_id":  user_id,
+                "match_count":     match_count,
+            }
+        ).execute()
 
     # result.data is a list of dicts like:
     # [

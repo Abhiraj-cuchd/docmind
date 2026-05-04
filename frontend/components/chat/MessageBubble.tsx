@@ -4,13 +4,16 @@ import { Message } from '@/lib/types';
 import { Citations } from './Citations';
 import { Badge } from '@/components/ui/badge';
 import { SpeakerHigh } from '@phosphor-icons/react';
-import { useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
 
 interface MessageBubbleProps {
   message: Message;
   voiceMode?: boolean;
+  isStreaming?: boolean;
+  onStreamComplete?: (messageId: string) => void;
+  onStreamProgress?: () => void;
 }
 
 const PATH_LABELS: Record<string, { label: string; color: string }> = {
@@ -20,18 +23,78 @@ const PATH_LABELS: Record<string, { label: string; color: string }> = {
   conversational: { label: 'Chat', color: 'bg-amber-500/15 text-amber-400 border-amber-500/20' },
 };
 
-export function MessageBubble({ message, voiceMode }: MessageBubbleProps) {
+export function MessageBubble({ message, voiceMode, isStreaming, onStreamComplete, onStreamProgress }: MessageBubbleProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const isUser = message.role === 'user';
   const pathInfo = message.path ? PATH_LABELS[message.path] : null;
+  const [displayText, setDisplayText] = useState(message.content);
+
+  const prefersReducedMotion = useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  }, []);
 
   const handlePlayVoice = () => {
-    if (!message.voice_url) return;
-    if (!audioRef.current) {
-      audioRef.current = new Audio(message.voice_url);
-    }
-    audioRef.current.play().catch(console.error);
+    const urls = message.voice_urls && message.voice_urls.length > 0
+      ? message.voice_urls
+      : message.voice_url
+        ? [message.voice_url]
+        : [];
+
+    if (urls.length === 0) return;
+
+    let index = 0;
+    const playNext = () => {
+      audioRef.current = new Audio(urls[index]);
+      audioRef.current.onended = () => {
+        index += 1;
+        if (index < urls.length) {
+          playNext();
+        }
+      };
+      audioRef.current.play().catch(console.error);
+    };
+
+    playNext();
   };
+
+  useEffect(() => {
+    setDisplayText(message.content);
+  }, [message.content, message.id]);
+
+  useEffect(() => {
+    if (isUser) return;
+    if (!message.content) return;
+    if (prefersReducedMotion) return;
+
+    if (!isStreaming) {
+      setDisplayText(message.content);
+      return;
+    }
+
+    let index = 0;
+    const fullText = message.content;
+    setDisplayText('');
+
+    const interval = window.setInterval(() => {
+      index += 1;
+      setDisplayText(fullText.slice(0, index));
+      onStreamProgress?.();
+
+      if (index >= fullText.length) {
+        window.clearInterval(interval);
+        onStreamComplete?.(message.id);
+      }
+    }, 16);
+
+    return () => window.clearInterval(interval);
+  }, [isStreaming, isUser, message.content, message.id, onStreamComplete, onStreamProgress, prefersReducedMotion]);
+
+  const formattedContent = isUser ? (
+    <p className="whitespace-pre-wrap">{message.content}</p>
+  ) : (
+    <div className="assistant-content">{renderFormattedText(displayText)}</div>
+  );
 
   return (
     <div className={cn('flex items-start gap-3 px-4 py-2', isUser ? 'flex-row-reverse' : 'flex-row')}>
@@ -53,7 +116,7 @@ export function MessageBubble({ message, voiceMode }: MessageBubbleProps) {
               : 'message-assistant rounded-tl-sm'
           )}
         >
-          <p className="whitespace-pre-wrap">{message.content}</p>
+          {formattedContent}
 
           {/* Citations for assistant messages */}
           {!isUser && message.sources && message.sources.length > 0 && (
@@ -86,17 +149,83 @@ export function MessageBubble({ message, voiceMode }: MessageBubbleProps) {
           </span>
 
           {/* Voice button */}
-          {!isUser && message.voice_url && (
+          {!isUser && (message.voice_url || (message.voice_urls && message.voice_urls.length > 0)) && (
             <button
               onClick={handlePlayVoice}
-              className="text-muted-foreground/60 hover:text-primary transition-colors"
+              className="flex items-center gap-1 px-2 py-1 rounded-md border border-primary/30 bg-primary/10 text-primary text-[10px] font-medium hover:bg-primary/15 transition-colors"
               title="Play audio"
             >
               <SpeakerHigh className="size-3.5" />
+              Play audio
             </button>
           )}
         </div>
       </div>
     </div>
   );
+}
+
+function renderFormattedText(text: string) {
+  if (!text) return null;
+
+  const blocks = text.split(/\n\n+/g);
+
+  return blocks.map((block, blockIndex) => {
+    const lines = block.split('\n');
+    const isUnordered = lines.every(line => /^\s*[-*]\s+/.test(line));
+    const isOrdered = lines.every(line => /^\s*\d+\.\s+/.test(line));
+
+    if (isUnordered) {
+      return (
+        <ul key={`ul-${blockIndex}`} className="list-disc pl-5 space-y-1">
+          {lines.map((line, lineIndex) => {
+            const { content, indent } = parseListItem(line, /^\s*[-*]\s+/);
+            return (
+              <li key={`ul-${blockIndex}-${lineIndex}`} style={{ marginLeft: indent * 16 }}>
+                {renderInline(content)}
+              </li>
+            );
+          })}
+        </ul>
+      );
+    }
+
+    if (isOrdered) {
+      return (
+        <ol key={`ol-${blockIndex}`} className="list-decimal pl-5 space-y-1">
+          {lines.map((line, lineIndex) => {
+            const { content, indent } = parseListItem(line, /^\s*\d+\.\s+/);
+            return (
+              <li key={`ol-${blockIndex}-${lineIndex}`} style={{ marginLeft: indent * 16 }}>
+                {renderInline(content)}
+              </li>
+            );
+          })}
+        </ol>
+      );
+    }
+
+    return (
+      <p key={`p-${blockIndex}`} className="whitespace-pre-wrap">
+        {renderInline(block)}
+      </p>
+    );
+  });
+}
+
+function parseListItem(line: string, pattern: RegExp) {
+  const leadingSpaces = line.match(/^\s*/)?.[0]?.length ?? 0;
+  const indent = Math.floor(leadingSpaces / 2);
+  const content = line.replace(pattern, '').trim();
+  return { content, indent };
+}
+
+function renderInline(text: string) {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
+      return <strong key={`b-${index}`}>{part.slice(2, -2)}</strong>;
+    }
+    return <span key={`t-${index}`}>{part}</span>;
+  });
 }

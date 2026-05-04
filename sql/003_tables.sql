@@ -115,6 +115,12 @@ CREATE TABLE rag.conversations (
     -- Default title shown in the sidebar until the user renames it
     title       TEXT        NOT NULL DEFAULT 'New conversation',
 
+    -- Optional: conversation scoped to a specific document
+    document_id UUID        REFERENCES rag.documents(id),
+
+    -- Optional: long-term summary of the conversation
+    summary     TEXT,
+
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     -- CONCEPT: updated_at lets you sort conversations by most recently

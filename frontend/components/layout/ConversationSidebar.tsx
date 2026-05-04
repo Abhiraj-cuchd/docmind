@@ -6,8 +6,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Plus, ChatCircle, SignOut } from '@phosphor-icons/react';
 import { useAuth } from '@/hooks/useAuth';
-import { useTheme } from '@/components/providers/ThemeProvider';
-import { Sun, Moon } from '@phosphor-icons/react';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -27,7 +25,6 @@ export function ConversationSidebar({
   onNew,
 }: ConversationSidebarProps) {
   const { signOut } = useAuth();
-  const { theme, toggleTheme } = useTheme();
 
   return (
     <div className="flex flex-col h-full glass-panel">
@@ -42,15 +39,7 @@ export function ConversationSidebar({
           <span className="text-sm font-bold gradient-text">DocMind</span>
         </div>
 
-        <div className="flex items-center gap-1">
-          <button
-            onClick={toggleTheme}
-            className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-            title="Toggle theme"
-          >
-            {theme === 'dark' ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}
-          </button>
-        </div>
+        <div className="flex items-center gap-1" />
       </div>
 
       {/* New conversation button */}

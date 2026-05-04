@@ -82,6 +82,7 @@ export function useRAGQuery(): UseRAGQueryReturn {
           answer: response.answer ?? '',
           cached: response.cached ?? false,
           voice_url: response.voice_url ?? null,
+          voice_urls: response.voice_urls ?? null,
           voice_credits_remaining: response.voice_credits_remaining ?? 0,
           tokens_used: response.tokens_used ?? 0,
           path: response.path ?? 'conversational',

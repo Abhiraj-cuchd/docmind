@@ -10,7 +10,7 @@ interface UseConversationsReturn {
   conversations: Conversation[];
   loading: boolean;
   error: string | null;
-  createConversation: (title?: string) => Promise<Conversation | null>;
+  createConversation: (title?: string, documentId?: string) => Promise<Conversation | null>;
   refresh: () => void;
 }
 
@@ -37,7 +37,7 @@ export function useConversations(): UseConversationsReturn {
     fetchConversations();
   }, [fetchConversations]);
 
-  const createConversation = useCallback(async (title = 'New Conversation'): Promise<Conversation | null> => {
+  const createConversation = useCallback(async (title = 'New Conversation', documentId?: string): Promise<Conversation | null> => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return null;
@@ -47,6 +47,10 @@ export function useConversations(): UseConversationsReturn {
         user_id: session.user.id,
         title,
       };
+
+      if (documentId) {
+        newConv.document_id = documentId;
+      }
 
       const result = await supabaseFetch<Conversation[]>('conversations', {
         method: 'POST',

@@ -2,6 +2,8 @@ export interface Conversation {
   id: string;
   user_id: string;
   title: string;
+  document_id?: string | null;
+  summary?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -20,6 +22,7 @@ export interface Message {
   content: string;
   sources?: Source[];
   voice_url?: string | null;
+  voice_urls?: string[] | null;
   voice_credits_remaining?: number;
   tokens_used?: number;
   path?: 'rag' | 'direct' | 'cache' | 'conversational';
@@ -53,6 +56,7 @@ export interface QueryResponse {
   answer?: string;
   cached?: boolean;
   voice_url?: string | null;
+  voice_urls?: string[] | null;
   voice_credits_remaining?: number;
   tokens_used?: number;
   path?: 'rag' | 'direct' | 'cache' | 'conversational';
@@ -64,6 +68,7 @@ export interface PollResult {
   answer: string;
   cached: boolean;
   voice_url: string | null;
+  voice_urls?: string[] | null;
   voice_credits_remaining: number;
   tokens_used: number;
   path: 'rag' | 'direct' | 'cache' | 'conversational';

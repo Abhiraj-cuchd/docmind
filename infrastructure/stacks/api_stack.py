@@ -81,6 +81,12 @@ class ApiStack(cdk.Stack):
         )
 
         self.api.add_routes(
+            path="/document-url",
+            methods=[apigw.HttpMethod.GET],
+            integration=submit_integration,
+        )
+
+        self.api.add_routes(
             path="/upload",
             methods=[apigw.HttpMethod.POST],
             integration=submit_integration,

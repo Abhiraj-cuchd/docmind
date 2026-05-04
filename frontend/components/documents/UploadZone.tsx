@@ -60,7 +60,7 @@ export function UploadZone({ onUploadComplete, compact }: UploadZoneProps) {
 
       // Step 2: Get presigned URL from Lambda
       setStatusText('Getting upload URL…');
-      const { data: presignData } = await api.post<{ presigned_url: string }>('/api/upload', {
+      const { data: presignData } = await api.post<{ upload_url: string }>('/api/upload', {
         filename: selectedFile.name,
         document_id: doc.id,
       });
@@ -78,7 +78,7 @@ export function UploadZone({ onUploadComplete, compact }: UploadZoneProps) {
         };
         xhr.onload = () => xhr.status < 400 ? resolve() : reject(new Error(`Upload failed: ${xhr.status}`));
         xhr.onerror = () => reject(new Error('Network error during upload'));
-        xhr.open('PUT', presignData.presigned_url);
+        xhr.open('PUT', presignData.upload_url);
         xhr.setRequestHeader('Content-Type', 'application/pdf');
         xhr.send(selectedFile);
       });

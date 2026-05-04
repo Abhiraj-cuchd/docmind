@@ -114,11 +114,19 @@ class StorageStack(cdk.Stack):
 
             # CONCEPT: CORS allows the frontend to PUT files directly
             # to S3 using presigned URLs — bypassing Lambda's 6MB limit.
+            # Update pdf_bucket CORS to also allow GET
             cors=[
                 s3.CorsRule(
-                    allowed_methods=[s3.HttpMethods.PUT],
-                    allowed_origins=["*"],   # tighten to your domain in prod
+                    allowed_methods=[
+                        s3.HttpMethods.PUT,  # for upload
+                        s3.HttpMethods.GET,  # for preview
+                    ],
+                    allowed_origins=["*"],  # tighten to your domain in prod
                     allowed_headers=["*"],
+                    exposed_headers=[
+                        "Content-Type",
+                        "Content-Length",
+                    ],
                     max_age=3000,
                 )
             ],

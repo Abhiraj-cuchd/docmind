@@ -187,6 +187,22 @@
   border: 1px solid oklch(1 0 0 / 8%);
 }
 
+/* Assistant formatted content */
+.assistant-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.assistant-content ul,
+.assistant-content ol {
+  padding-left: 1.25rem;
+}
+
+.assistant-content li {
+  margin-top: 0.15rem;
+}
+
 /* Glass morphism panels */
 .glass-panel {
   background: oklch(0.13 0.015 265 / 80%);

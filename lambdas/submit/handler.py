@@ -72,6 +72,8 @@ def handler(event, context):
 
     if "/upload" in path:
         return handle_upload(event)
+    elif "/document-url" in path:
+        return handle_document_url(event)
     else:
         return handle_query(event)
 
@@ -234,11 +236,22 @@ def handle_query(event: dict) -> dict:
             "tokens_used": 0,
         })
 
-    # ── Step 4: Cache check ────────────────────────────────────────
-    # CONCEPT: User-scoped cache key — different users asking the same
-    # question get answers from their own documents, not each other's.
+    # ── Step 4: Validate conversation ─────────────────────────────
+    # CONCEPT: Verify the conversation exists and belongs to this user
+    # before using it for cache or enqueueing. Prevents injecting
+    # messages into other users' conversations by guessing IDs.
+    conversation = _get_conversation(conversation_id, user_id)
+    if not conversation:
+        return _error_response(
+            404,
+            "Conversation not found or does not belong to you"
+        )
+
+    # ── Step 5: Cache check ────────────────────────────────────────
+    # CONCEPT: User- and document-scoped cache key — different
+    # documents avoid cross-contaminating answers.
     r         = get_redis_client()
-    cache_key = _make_cache_key(user_id, query)
+    cache_key = _make_cache_key(user_id, query, conversation.get("document_id"))
     cached    = r.get(cache_key)
 
     if cached:
@@ -258,16 +271,6 @@ def handle_query(event: dict) -> dict:
             "cached":      True,
             "tokens_used": 0,
         })
-
-    # ── Step 5: Validate conversation ─────────────────────────────
-    # CONCEPT: Verify the conversation exists and belongs to this user
-    # before enqueuing. Prevents injecting messages into other users'
-    # conversations by guessing conversation IDs.
-    if not _verify_conversation(conversation_id, user_id):
-        return _error_response(
-            404,
-            "Conversation not found or does not belong to you"
-        )
 
     # ── Step 6: Generate job ID + write pending to Redis ───────────
     job_id = str(uuid.uuid4())
@@ -303,26 +306,105 @@ def handle_query(event: dict) -> dict:
         "status": "pending",
     })
 
+def handle_document_url(event: dict) -> dict:
+    """
+    Generates a presigned GET URL for viewing a PDF from S3.
+    Frontend uses this URL in an iframe to preview the document.
 
+    CONCEPT: We never expose S3 directly to the frontend.
+    The presigned URL is temporary (1 hour) and pre-authorised.
+    It works in an iframe because it's a direct HTTPS GET to S3.
+
+    Query params: ?document_id=uuid
+    """
+
+    # ── Auth ───────────────────────────────────────────────────────
+    try:
+        user    = get_user_from_event(event)
+        user_id = user["user_id"]
+    except Exception as e:
+        return create_auth_error_response(str(e))
+
+    # ── Get document_id from query params ──────────────────────────
+    params      = event.get("queryStringParameters") or {}
+    document_id = params.get("document_id", "").strip()
+
+    if not document_id:
+        return _error_response(400, "document_id query parameter is required")
+
+    # ── Verify document belongs to this user ───────────────────────
+    # CONCEPT: Never generate a presigned URL for a document
+    # that doesn't belong to the requesting user.
+    # This prevents user A from viewing user B's documents.
+    try:
+        result = supabase.schema("rag").table("documents") \
+            .select("id, s3_key, filename, status") \
+            .eq("id", document_id) \
+            .eq("user_id", user_id) \
+            .single() \
+            .execute()
+
+        if not result.data:
+            return _error_response(404, "Document not found")
+
+        document = result.data
+
+    except Exception as e:
+        return _error_response(404, "Document not found")
+
+    if document["status"] != "ready":
+        return _error_response(400,
+            f"Document is not ready yet (status: {document['status']})")
+
+    s3_key = document["s3_key"]
+
+    # ── Generate presigned GET URL ─────────────────────────────────
+    # CONCEPT: presigned GET URL lets the browser fetch the PDF
+    # directly from S3 without AWS credentials.
+    # ExpiresIn=3600 means the URL is valid for 1 hour.
+    # The iframe loads it once — 1 hour is more than enough.
+    try:
+        presigned_url = s3_client.generate_presigned_url(
+            "get_object",
+            Params={
+                "Bucket": PDF_BUCKET_NAME,
+                "Key":    s3_key,
+            },
+            ExpiresIn=3600,
+        )
+
+        print(f"[DocumentURL] Presigned GET URL generated for "
+              f"document={document_id} user={user_id}")
+
+        return _success_response({
+            "document_url": presigned_url,
+            "filename":     document["filename"],
+            "document_id":  document_id,
+            "expires_in":   3600,
+        })
+
+    except Exception as e:
+        print(f"[DocumentURL] Failed to generate presigned URL: {e}")
+        return _error_response(500, f"Failed to generate document URL: {str(e)}")
 # ─────────────────────────────────────────────────────────────────────
 # PRIVATE HELPERS
 # ─────────────────────────────────────────────────────────────────────
 
-def _verify_conversation(conversation_id: str, user_id: str) -> bool:
+def _get_conversation(conversation_id: str, user_id: str) -> dict | None:
     """
-    Verifies the conversation exists and belongs to this user.
+    Returns the conversation row if it belongs to this user.
     """
     try:
         result = supabase.schema("rag") \
             .table("conversations") \
-            .select("id") \
+            .select("id, document_id") \
             .eq("id", conversation_id) \
             .eq("user_id", user_id) \
             .single() \
             .execute()
-        return result.data is not None
+        return result.data
     except Exception:
-        return False
+        return None
 
 
 def _save_exchange(
@@ -370,9 +452,10 @@ def _save_exchange(
         print(f"[Submit] Warning: failed to save exchange: {e}")
 
 
-def _make_cache_key(user_id: str, query: str) -> str:
+def _make_cache_key(user_id: str, query: str, document_id: str | None) -> str:
     h = hashlib.sha256(query.lower().strip().encode()).hexdigest()
-    return f"cache:{user_id}:{h}"
+    doc_part = document_id or "none"
+    return f"cache:{user_id}:{doc_part}:{h}"
 
 
 def _success_response(body: dict) -> dict:
