@@ -35,7 +35,7 @@ export default function UploadPage() {
               <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </div>
-          <span className="text-sm font-bold gradient-text">DocMind</span>
+          <span className="text-sm font-bold gradient-text">MindAgent</span>
         </div>
         <h1 className="text-sm font-medium text-muted-foreground ml-1">/ Upload Documents</h1>
       </header>

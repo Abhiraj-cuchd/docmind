@@ -42,7 +42,7 @@ export default function RegisterPage() {
   return (
     <div className="bg-card border border-border rounded-2xl p-8 shadow-2xl shadow-black/20">
       <h2 className="text-xl font-semibold mb-1">Create account</h2>
-      <p className="text-muted-foreground text-sm mb-6">Get started with DocMind for free</p>
+      <p className="text-muted-foreground text-sm mb-6">Get started with MindAgent for free</p>
 
       <form onSubmit={handleRegister} className="space-y-4">
         <div className="space-y-1.5">

@@ -11,7 +11,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
               <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </div>
-          <h1 className="text-2xl font-bold gradient-text">DocMind</h1>
+          <h1 className="text-2xl font-bold gradient-text">MindAgent</h1>
           <p className="text-muted-foreground text-sm mt-1">AI-powered document intelligence</p>
         </div>
         {children}

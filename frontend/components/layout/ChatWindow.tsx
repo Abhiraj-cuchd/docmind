@@ -223,7 +223,7 @@ function ChatWindowInner({
                   <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                 </svg>
               </div>
-              <h3 className="text-sm font-semibold text-foreground mb-1">Ask DocMind anything</h3>
+              <h3 className="text-sm font-semibold text-foreground mb-1">Ask MindAgent anything</h3>
               <p className="text-xs text-muted-foreground max-w-xs">
                 Upload documents and ask questions. I&apos;ll search through them to find the most relevant answers.
               </p>
