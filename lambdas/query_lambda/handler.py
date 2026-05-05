@@ -137,11 +137,18 @@ def _process_record(record: dict) -> None:
 
         if cached_answer:
             print(f"[Handler] Cache hit — 0 tokens consumed")
+            voice_url  = None
+            voice_urls = None
+            if voice_mode:
+                voice_urls = _handle_voice(user_id, cached_answer)
+                if voice_urls:
+                    voice_url = voice_urls[0]
             _write_result(r, job_id, {
                 "status":                  "done",
                 "answer":                  cached_answer,
                 "cached":                  True,
-                "voice_url":               None,
+                "voice_url":               voice_url,
+                "voice_urls":              voice_urls,
                 "voice_credits_remaining": _get_voice_credits(user_id),
                 "tokens_used":             0,
                 "path":                    "cache",
@@ -426,6 +433,10 @@ def _finish(
     path:             str = "rag",
 ) -> None:
     """Post-generation steps — voice, history, cache, result."""
+
+    # Detect general-knowledge fallback answer (Bug 4)
+    if path == "rag" and answer.startswith("This was not found in your documents."):
+        path = "rag_fallback"
 
     # Voice mode
     voice_url = None

@@ -21,11 +21,13 @@ import json
 import os
 import uuid
 import hashlib
+import base64
 import boto3
+import requests as _req
 from upstash_redis              import Redis
 from shared_lambda.auth         import get_user_from_event, create_auth_error_response
 from shared_lambda.secrets      import get_secret
-from shared_lambda.supabase_client import get_service_client
+from shared_lambda.supabase_client import get_service_client, consume_voice_credit, refund_voice_credit
 from shared_lambda.classifier   import get_conversational_response
 
 
@@ -43,6 +45,7 @@ supabase = get_service_client()
 QUERY_QUEUE_URL = os.getenv("QUERY_QUEUE_URL")
 PDF_BUCKET_NAME = os.getenv("PDF_BUCKET_NAME")
 CACHE_TTL       = 3600
+TTS_MAX_CHARS   = 500
 
 
 def get_redis_client() -> Redis:
@@ -257,6 +260,13 @@ def handle_query(event: dict) -> dict:
     if cached:
         print(f"[Submit] Cache hit — returning instantly")
 
+        voice_url  = None
+        voice_urls = None
+        if voice_mode:
+            voice_urls = _handle_voice(user_id, cached)
+            if voice_urls:
+                voice_url = voice_urls[0]
+
         _save_exchange(
             conversation_id=conversation_id,
             user_id=user_id,
@@ -269,6 +279,8 @@ def handle_query(event: dict) -> dict:
             "status":      "done",
             "answer":      cached,
             "cached":      True,
+            "voice_url":   voice_url,
+            "voice_urls":  voice_urls,
             "tokens_used": 0,
         })
 
@@ -389,6 +401,100 @@ def handle_document_url(event: dict) -> dict:
 # ─────────────────────────────────────────────────────────────────────
 # PRIVATE HELPERS
 # ─────────────────────────────────────────────────────────────────────
+
+def _handle_voice(user_id: str, answer: str) -> list[str] | None:
+    """Run TTS for a cached answer when voice_mode=True."""
+    credit_consumed = consume_voice_credit(user_id)
+    if not credit_consumed:
+        print(f"[Submit] Voice: no credits for user {user_id}")
+        return None
+
+    try:
+        api_key = get_secret("SARVAM_API_KEY_RAG")
+        chunks  = _split_tts_chunks(answer, TTS_MAX_CHARS)
+        resp    = _req.post(
+            "https://api.sarvam.ai/text-to-speech",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type":  "application/json",
+            },
+            json={
+                "inputs":               chunks,
+                "target_language_code": "en-IN",
+                "speaker":              "shruti",
+                "model":                "bulbul:v3",
+                "pace":                 1.15,
+                "enable_preprocessing": True,
+            },
+            timeout=30,
+        )
+
+        if resp.status_code != 200:
+            raise Exception(f"TTS error {resp.status_code}: {resp.text}")
+
+        audios  = resp.json().get("audios", [])
+        s3      = boto3.client("s3")
+        bucket  = os.getenv("VOICE_BUCKET_NAME")
+        voice_urls = []
+
+        for index, audio_b64 in enumerate(audios):
+            audio = base64.b64decode(audio_b64)
+            key   = f"audio/{user_id}/{uuid.uuid4()}_{index}.wav"
+            s3.put_object(Bucket=bucket, Key=key, Body=audio, ContentType="audio/wav")
+            voice_urls.append(
+                s3.generate_presigned_url(
+                    "get_object",
+                    Params={"Bucket": bucket, "Key": key},
+                    ExpiresIn=86400,
+                )
+            )
+
+        return voice_urls
+
+    except Exception as e:
+        print(f"[Submit] Voice TTS failed — refunding credit: {e}")
+        refund_voice_credit(user_id)
+        return None
+
+
+def _split_tts_chunks(text: str, max_chars: int) -> list[str]:
+    cleaned = " ".join(text.split())
+    if not cleaned:
+        return []
+    if len(cleaned) <= max_chars:
+        return [cleaned]
+
+    sentences = []
+    start = 0
+    for i, char in enumerate(cleaned):
+        if char in ".!?" and i + 1 < len(cleaned) and cleaned[i + 1] == " ":
+            sentences.append(cleaned[start:i + 1])
+            start = i + 2
+    if start < len(cleaned):
+        sentences.append(cleaned[start:])
+
+    chunks, buffer = [], ""
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        if len(sentence) > max_chars:
+            while sentence:
+                chunks.append(sentence[:max_chars])
+                sentence = sentence[max_chars:]
+            buffer = ""
+            continue
+        if not buffer:
+            buffer = sentence
+        elif len(buffer) + 1 + len(sentence) <= max_chars:
+            buffer = f"{buffer} {sentence}"
+        else:
+            chunks.append(buffer)
+            buffer = sentence
+    if buffer:
+        chunks.append(buffer)
+    return chunks
+
 
 def _get_conversation(conversation_id: str, user_id: str) -> dict | None:
     """

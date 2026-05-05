@@ -3,7 +3,7 @@
 import { Message } from '@/lib/types';
 import { Citations } from './Citations';
 import { SpeakerHigh } from '@phosphor-icons/react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -12,6 +12,7 @@ interface MessageBubbleProps {
   isStreaming?: boolean;
   onStreamComplete?: (messageId: string) => void;
   onStreamProgress?: () => void;
+  onPlayVoice?: (urls: string[]) => void;
 }
 
 const PATH_LABELS: Record<string, { label: string; color: string }> = {
@@ -19,10 +20,10 @@ const PATH_LABELS: Record<string, { label: string; color: string }> = {
   direct: { label: 'Direct', color: 'bg-blue-500/15 text-blue-400 border-blue-500/20' },
   cache: { label: 'Cached', color: 'bg-green-500/15 text-green-400 border-green-500/20' },
   conversational: { label: 'Chat', color: 'bg-amber-500/15 text-amber-400 border-amber-500/20' },
+  rag_fallback: { label: 'General Knowledge', color: 'bg-orange-500/15 text-orange-400 border-orange-500/20' },
 };
 
-export function MessageBubble({ message, isStreaming, onStreamComplete, onStreamProgress }: MessageBubbleProps) {
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+export function MessageBubble({ message, isStreaming, onStreamComplete, onStreamProgress, onPlayVoice }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const pathInfo = message.path ? PATH_LABELS[message.path] : null;
   const [displayText, setDisplayText] = useState(message.content);
@@ -38,22 +39,7 @@ export function MessageBubble({ message, isStreaming, onStreamComplete, onStream
       : message.voice_url
         ? [message.voice_url]
         : [];
-
-    if (urls.length === 0) return;
-
-    let index = 0;
-    const playNext = () => {
-      audioRef.current = new Audio(urls[index]);
-      audioRef.current.onended = () => {
-        index += 1;
-        if (index < urls.length) {
-          playNext();
-        }
-      };
-      audioRef.current.play().catch(console.error);
-    };
-
-    playNext();
+    if (urls.length > 0) onPlayVoice?.(urls);
   };
 
   useEffect(() => {

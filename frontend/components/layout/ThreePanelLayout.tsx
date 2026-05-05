@@ -25,7 +25,11 @@ export function ThreePanelLayout({
   const { user } = useAuth();
   const conversationByDocumentIdRef = useRef<Record<string, string>>({});
   const handleSelectDocument = useCallback((documentId: string) => {
-    if (documentId === activeDocumentId && activeConversationId) return;
+    if (documentId === activeDocumentId) {
+      // Same document clicked — start a new conversation on it
+      setSelection({ conversationId: null, documentId });
+      return;
+    }
 
     const cachedConversationId = conversationByDocumentIdRef.current[documentId];
     if (cachedConversationId) {
@@ -34,7 +38,7 @@ export function ThreePanelLayout({
     }
 
     setSelection({ conversationId: null, documentId });
-  }, [activeConversationId, activeDocumentId, setSelection]);
+  }, [activeDocumentId, setSelection]);
 
   return (
     <div className="flex h-full overflow-hidden bg-background animate-in fade-in-0 duration-300">

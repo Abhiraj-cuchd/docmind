@@ -50,7 +50,9 @@ import { useEffect, useRef, useState } from 'react';
 import { Message } from '@/lib/types';
 import { useMessages } from '@/hooks/useMessages';
 import { useRAGQuery } from '@/hooks/useRAGQuery';
+import { useAudioPlayer } from '@/hooks/useAudioPlayer';
 import { MessageBubble } from '@/components/chat/MessageBubble';
+import { AudioPlayerBar } from '@/components/chat/AudioPlayerBar';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { TypingIndicator } from '@/components/chat/TypingIndicator';
 import { VoiceToggle } from '@/components/chat/VoiceToggle';
@@ -76,21 +78,11 @@ function ChatWindowInner({
 }: ChatWindowProps) {
   const { messages, loading, addMessage } = useMessages(conversationId);
   const { submit, isLoading, isPolling, abort } = useRAGQuery();
+  const player = useAudioPlayer();
   const [voiceMode, setVoiceMode] = useState(false);
   const [voiceCredits, setVoiceCredits] = useState<number | undefined>(undefined);
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-
-  const playVoiceSequence = async (urls: string[]) => {
-    for (const url of urls) {
-      await new Promise<void>((resolve, reject) => {
-        const audio = new Audio(url);
-        audio.onended = () => resolve();
-        audio.onerror = () => reject(new Error('Audio playback failed'));
-        audio.play().catch(reject);
-      });
-    }
-  };
 
   // Auto-scroll on new messages
   useEffect(() => {
@@ -159,13 +151,14 @@ function ChatWindowInner({
       addMessage(assistantMsg);
       setStreamingMessageId(assistantMsg.id);
 
-      // Auto-play voice if voice_url present and voice mode on
+      // Auto-play voice if returned and voice mode on
       if (voiceMode) {
-        if (result.voice_urls && result.voice_urls.length > 0) {
-          void playVoiceSequence(result.voice_urls).catch(() => {});
-        } else if (result.voice_url) {
-          new Audio(result.voice_url).play().catch(() => {});
-        }
+        const urls = result.voice_urls && result.voice_urls.length > 0
+          ? result.voice_urls
+          : result.voice_url
+            ? [result.voice_url]
+            : [];
+        if (urls.length > 0) player.play(urls);
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Query failed');
@@ -209,6 +202,14 @@ function ChatWindowInner({
         <VoiceToggle enabled={voiceMode} onToggle={setVoiceMode} credits={voiceCredits} />
       </div>
 
+      <AudioPlayerBar
+        isPlaying={player.isPlaying}
+        isPaused={player.isPaused}
+        onPause={player.pause}
+        onResume={player.resume}
+        onStop={player.stop}
+      />
+
       {/* Messages — flex-1 + overflow-y-auto makes this panel independently scrollable */}
       <div className="flex-1 overflow-y-auto min-h-0">
         <div className="py-4 space-y-1">
@@ -240,6 +241,7 @@ function ChatWindowInner({
                   }
                 }}
                 onStreamProgress={() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' })}
+                onPlayVoice={player.play}
               />
             ))
           )}

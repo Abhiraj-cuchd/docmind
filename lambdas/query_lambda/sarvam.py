@@ -199,15 +199,19 @@ def _build_rag_prompt(
     history_text = _format_history(history)
 
     prompt = f"""You are a helpful assistant that answers questions \
-based strictly on the provided document context.
+based on the provided document context.
 
 Rules:
-- Answer ONLY using information from the context chunks below
-- If the answer is not in the context, say: \
-"I could not find this information in your documents"
+- Prefer answering from the document context chunks below
+- If the context contains the answer, use it and cite the relevant \
+chunk or page
+- If the context does NOT contain the answer, first state that clearly, \
+then provide the answer from your own general knowledge using this exact \
+format: "This was not found in your documents. Based on my knowledge: \
+[your answer]"
+- Never fabricate document content — only attribute information to the \
+document if it actually appears in the context chunks
 - Be concise and specific
-- Reference which chunk or page your answer comes from \
-when relevant
 {history_text}
 Document context:
 {context_block}
