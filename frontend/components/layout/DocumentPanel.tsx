@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import {
   FileText, Upload, AlertCircle,
   CheckCircle, Loader2,
-  ExternalLink, RefreshCw, ArrowLeft, X
+  ExternalLink, RefreshCw, ArrowLeft, X, Trash2, Check
 } from 'lucide-react'
 import type { Source } from '@/lib/types'
 import { Button } from '@/components/ui/button'
@@ -16,6 +16,7 @@ import {
   TooltipProvider,
   TooltipTrigger
 } from '@/components/ui/tooltip'
+import { toast } from 'sonner'
 
 // ─────────────────────────────────────────────────────────────────────
 // TYPES
@@ -39,6 +40,7 @@ interface DocumentPanelProps {
   userId: string
   activeDocumentId: string | null
   onDocumentSelect: (documentId: string, filename?: string) => void
+  onDocumentDeleted?: (documentId: string) => void
   activeSource?: Source | null
   onClearActiveSource?: () => void
 }
@@ -87,24 +89,47 @@ interface DocumentCardProps {
   document: Document
   isActive: boolean
   onSelect: () => void
+  onDelete: (id: string) => Promise<void>
 }
 
-function DocumentCard({ document, isActive, onSelect }: DocumentCardProps) {
+function DocumentCard({ document, isActive, onSelect, onDelete }: DocumentCardProps) {
   const totalPages   = document.doc_metadata?.total_pages
   const fileSize     = document.doc_metadata?.file_size_bytes
   const skippedCount = document.skipped_pages?.length ?? 0
   const isReady      = document.status === 'ready'
   const isProcessing = ['processing', 'indexing'].includes(document.status)
 
+  const [confirming, setConfirming] = useState(false)
+  const [deleting, setDeleting]     = useState(false)
+
+  const handleDeleteClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setConfirming(true)
+  }
+
+  const handleConfirm = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setConfirming(false)
+    setDeleting(true)
+    await onDelete(document.id)
+    setDeleting(false)
+  }
+
+  const handleCancel = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setConfirming(false)
+  }
+
   return (
     <div
       className={`
-        flex flex-col gap-2 p-3 rounded-lg border cursor-pointer
+        group flex flex-col gap-2 p-3 rounded-lg border cursor-pointer
         transition-all duration-150
         ${isActive
           ? 'border-blue-500/50 bg-blue-500/10'
           : 'border-zinc-700/50 bg-zinc-800/30 hover:border-zinc-600 hover:bg-zinc-800/60'
         }
+        ${deleting ? 'opacity-50 pointer-events-none' : ''}
       `}
       onClick={onSelect}
     >
@@ -121,7 +146,40 @@ function DocumentCard({ document, isActive, onSelect }: DocumentCardProps) {
             </p>
           </div>
         </div>
-        <StatusBadge status={document.status} />
+
+        <div className="flex items-center gap-1.5 shrink-0">
+          <StatusBadge status={document.status} />
+
+          {/* Delete controls — hidden while processing */}
+          {!isProcessing && (
+            confirming ? (
+              <div className="flex items-center gap-0.5">
+                <button
+                  onClick={handleConfirm}
+                  className="p-1 rounded text-red-400 hover:bg-red-500/10 transition-colors"
+                  title="Confirm delete"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={handleCancel}
+                  className="p-1 rounded text-zinc-500 hover:bg-zinc-700/50 transition-colors"
+                  title="Cancel"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={handleDeleteClick}
+                className="opacity-0 group-hover:opacity-100 p-1 rounded text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-all"
+                title="Delete document"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            )
+          )}
+        </div>
       </div>
 
       {/* Meta row */}
@@ -169,6 +227,7 @@ export default function DocumentPanel({
   userId,
   activeDocumentId,
   onDocumentSelect,
+  onDocumentDeleted,
   activeSource,
   onClearActiveSource,
 }: DocumentPanelProps) {
@@ -277,6 +336,31 @@ export default function DocumentPanel({
       setPreviewDoc(doc)
     }
   }, [onDocumentSelect])
+
+  const handleDeleteDocument = useCallback(async (docId: string) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) { toast.error('Not authenticated'); return }
+
+      const res = await fetch(`/api/documents/${docId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        toast.error(err.error || 'Failed to delete document')
+        return
+      }
+
+      setDocuments(prev => prev.filter(d => d.id !== docId))
+      if (previewDoc?.id === docId) setPreviewDoc(null)
+      onDocumentDeleted?.(docId)
+      toast.success('Document deleted')
+    } catch {
+      toast.error('Failed to delete document')
+    }
+  }, [supabase, previewDoc, onDocumentDeleted])
 
   const iframeSrc = useMemo(() => {
     if (!pdfUrl) return null
@@ -453,6 +537,7 @@ export default function DocumentPanel({
                 document={doc}
                 isActive={activeDocumentId === doc.id}
                 onSelect={() => handleSelect(doc)}
+                onDelete={handleDeleteDocument}
               />
             ))}
           </div>

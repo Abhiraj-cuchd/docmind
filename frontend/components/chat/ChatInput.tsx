@@ -12,8 +12,6 @@ interface ChatInputProps {
   disabled?: boolean;
   isLoading?: boolean;
   placeholder?: string;
-  responseStyle: 'concise' | 'explanatory' | 'conversational';
-  onResponseStyleChange: (style: 'concise' | 'explanatory' | 'conversational') => void;
 }
 
 export function ChatInput({
@@ -22,8 +20,6 @@ export function ChatInput({
   disabled,
   isLoading,
   placeholder = 'Ask anything about your documents…',
-  responseStyle,
-  onResponseStyleChange,
 }: ChatInputProps) {
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -56,19 +52,6 @@ export function ChatInput({
 
   return (
     <div className="p-4 border-t border-border/50">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-[11px] font-medium text-muted-foreground">Response style</span>
-        <select
-          value={responseStyle}
-          onChange={(e) => onResponseStyleChange(e.target.value as 'concise' | 'explanatory' | 'conversational')}
-          className="bg-card border border-border rounded-md px-2 py-1 text-[11px] text-foreground"
-          disabled={disabled}
-        >
-          <option value="concise">Concise</option>
-          <option value="explanatory">Explanatory</option>
-          <option value="conversational">Conversational</option>
-        </select>
-      </div>
       <div className="relative flex items-end gap-2 bg-card border border-border rounded-2xl p-2 focus-within:border-primary/40 focus-within:ring-1 focus-within:ring-primary/20 transition-all">
         <Textarea
           ref={textareaRef}

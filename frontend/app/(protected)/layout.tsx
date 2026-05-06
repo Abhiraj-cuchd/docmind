@@ -4,7 +4,6 @@ import { useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import { ConversationSidebar } from '@/components/layout/ConversationSidebar';
-import { useConversations } from '@/hooks/useConversations';
 import { ConversationSelectionProvider, useConversationSelection } from '@/components/providers/ConversationSelectionProvider';
 import { Conversation } from '@/lib/types';
 
@@ -40,8 +39,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
 
 function ProtectedShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const { conversations, loading } = useConversations();
-  const { selection, setSelection, clearSelection } = useConversationSelection();
+  const { conversations, conversationsLoading: loading, selection, setSelection, clearSelection, deleteConversation } = useConversationSelection();
 
   const handleSelectConversation = useCallback((conversation: Conversation) => {
     setSelection({
@@ -56,6 +54,11 @@ function ProtectedShell({ children }: { children: React.ReactNode }) {
     router.push('/dashboard');
   }, [clearSelection, router]);
 
+  const handleDeleteActive = useCallback(() => {
+    clearSelection();
+    router.push('/dashboard');
+  }, [clearSelection, router]);
+
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <aside className="w-[20%] min-w-[200px] max-w-[280px] h-full flex-shrink-0">
@@ -65,6 +68,8 @@ function ProtectedShell({ children }: { children: React.ReactNode }) {
           activeId={selection.conversationId}
           onSelect={handleSelectConversation}
           onNew={handleNewConversation}
+          onDelete={deleteConversation}
+          onDeleteActive={handleDeleteActive}
         />
       </aside>
       <main className="flex-1 min-w-0 h-full">

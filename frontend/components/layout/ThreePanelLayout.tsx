@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { ChatWindow } from './ChatWindow';
 import DocumentPanel from './DocumentPanel';
-import { useConversations } from '@/hooks/useConversations';
+import { useConversationSelection } from '@/components/providers/ConversationSelectionProvider';
 import { useAuth } from '@/hooks/useAuth';
 import { Source } from '@/lib/types';
 
@@ -22,7 +22,7 @@ export function ThreePanelLayout({
   updateSelection,
   onBack,
 }: ThreePanelLayoutProps) {
-  const { createConversation } = useConversations();
+  const { createConversation } = useConversationSelection();
   const { user } = useAuth();
   const conversationByDocumentIdRef = useRef<Record<string, string>>({});
   const [activeSource, setActiveSource] = useState<Source | null>(null);
@@ -70,12 +70,17 @@ export function ThreePanelLayout({
       </main>
 
       {/* Right panel — document viewer */}
-      <aside className="w-[40%] min-w-[260px] max-w-[560px] h-full flex-shrink-0 hidden lg:flex flex-col">
+      <aside className="w-[46%] min-w-[280px] max-w-[640px] h-full flex-shrink-0 hidden lg:flex flex-col">
         <DocumentPanel
           userId={user?.id ?? ''}
           activeDocumentId={activeDocumentId}
           onDocumentSelect={(documentId) => {
             void handleSelectDocument(documentId);
+          }}
+          onDocumentDeleted={(documentId) => {
+            if (documentId === activeDocumentId) {
+              setSelection({ conversationId: null, documentId: null });
+            }
           }}
           activeSource={activeSource}
           onClearActiveSource={() => setActiveSource(null)}

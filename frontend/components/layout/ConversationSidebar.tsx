@@ -1,13 +1,15 @@
 'use client';
 
+import { useState } from 'react';
 import { Conversation } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Plus, ChatCircle, SignOut } from '@phosphor-icons/react';
+import { Plus, ChatCircle, SignOut, Trash, Check, X } from '@phosphor-icons/react';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
+import { toast } from 'sonner';
 
 interface ConversationSidebarProps {
   conversations: Conversation[];
@@ -15,6 +17,8 @@ interface ConversationSidebarProps {
   activeId: string | null;
   onSelect: (conversation: Conversation) => void;
   onNew: () => void;
+  onDelete: (id: string) => Promise<boolean>;
+  onDeleteActive?: () => void;
 }
 
 export function ConversationSidebar({
@@ -23,8 +27,36 @@ export function ConversationSidebar({
   activeId,
   onSelect,
   onNew,
+  onDelete,
+  onDeleteActive,
 }: ConversationSidebarProps) {
   const { signOut } = useAuth();
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const handleDeleteClick = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    setConfirmingId(id);
+  };
+
+  const handleConfirmDelete = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    setConfirmingId(null);
+    setDeletingId(id);
+    const ok = await onDelete(id);
+    setDeletingId(null);
+    if (ok) {
+      if (id === activeId) onDeleteActive?.();
+      toast.success('Conversation deleted');
+    } else {
+      toast.error('Failed to delete conversation');
+    }
+  };
+
+  const handleCancelDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setConfirmingId(null);
+  };
 
   return (
     <div className="flex flex-col h-full glass-panel">
@@ -72,23 +104,64 @@ export function ConversationSidebar({
               <p className="text-xs text-muted-foreground/60">Start one above</p>
             </div>
           ) : (
-            conversations.map(conv => (
-              <button
-                key={conv.id}
-                onClick={() => onSelect(conv)}
-                className={cn(
-                  'w-full text-left px-3 py-2.5 rounded-xl transition-all duration-150 group',
-                  activeId === conv.id
-                    ? 'bg-primary/10 text-foreground border border-primary/20'
-                    : 'text-muted-foreground hover:bg-muted/40 hover:text-foreground border border-transparent'
-                )}
-              >
-                <p className="text-xs font-medium truncate">{conv.title}</p>
-                <p className="text-[10px] text-muted-foreground/60 mt-0.5">
-                  {formatDistanceToNow(new Date(conv.updated_at), { addSuffix: true })}
-                </p>
-              </button>
-            ))
+            conversations.map(conv => {
+              const isActive     = activeId === conv.id;
+              const isConfirming = confirmingId === conv.id;
+              const isDeleting   = deletingId === conv.id;
+
+              return (
+                <div
+                  key={conv.id}
+                  className={cn(
+                    'relative flex items-center rounded-xl transition-all duration-150 group',
+                    isActive
+                      ? 'bg-primary/10 border border-primary/20'
+                      : 'border border-transparent hover:bg-muted/40',
+                    isDeleting && 'opacity-50 pointer-events-none'
+                  )}
+                >
+                  <button
+                    onClick={() => onSelect(conv)}
+                    className="flex-1 text-left px-3 py-2.5 min-w-0"
+                  >
+                    <p className={cn('text-xs font-medium truncate', isActive ? 'text-foreground' : 'text-muted-foreground group-hover:text-foreground')}>
+                      {conv.title}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground/60 mt-0.5">
+                      {formatDistanceToNow(new Date(conv.updated_at), { addSuffix: true })}
+                    </p>
+                  </button>
+
+                  {/* Delete controls */}
+                  {isConfirming ? (
+                    <div className="flex items-center gap-0.5 pr-1.5 shrink-0">
+                      <button
+                        onClick={(e) => handleConfirmDelete(e, conv.id)}
+                        className="p-1 rounded-md text-destructive hover:bg-destructive/10 transition-colors"
+                        title="Confirm delete"
+                      >
+                        <Check className="size-3" weight="bold" />
+                      </button>
+                      <button
+                        onClick={handleCancelDelete}
+                        className="p-1 rounded-md text-muted-foreground hover:bg-muted/60 transition-colors"
+                        title="Cancel"
+                      >
+                        <X className="size-3" weight="bold" />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={(e) => handleDeleteClick(e, conv.id)}
+                      className="opacity-0 group-hover:opacity-100 p-1.5 mr-1.5 rounded-md text-muted-foreground/60 hover:text-destructive hover:bg-destructive/10 transition-all shrink-0"
+                      title="Delete conversation"
+                    >
+                      <Trash className="size-3" />
+                    </button>
+                  )}
+                </div>
+              );
+            })
           )}
         </div>
       </ScrollArea>

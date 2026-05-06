@@ -59,7 +59,9 @@ import { VoiceToggle } from '@/components/chat/VoiceToggle';
 
 import { toast } from 'sonner';
 import { v4 as uuidv4 } from 'uuid';
-import { ArrowLeft, ChatCircleDots } from '@phosphor-icons/react';
+import { ArrowLeft, ChatCircleDots, TextAlignLeft, BookOpen, ChatTeardrop } from '@phosphor-icons/react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 
 interface ChatWindowProps {
   conversationId: string | null;
@@ -68,6 +70,49 @@ interface ChatWindowProps {
   onConversationCreated?: (id: string) => void;
   onBack?: () => void;
   onSourceClick?: (source: Source) => void;
+}
+
+const STYLES = [
+  { value: 'concise',        label: 'Concise',        icon: TextAlignLeft,  tip: 'Short, direct answers'          },
+  { value: 'explanatory',    label: 'Explain',         icon: BookOpen,       tip: 'Structured breakdown'           },
+  { value: 'conversational', label: 'Casual',          icon: ChatTeardrop,   tip: 'Friendly, conversational tone'  },
+] as const;
+
+function StyleSwitcher({
+  value,
+  onChange,
+}: {
+  value: ResponseStyle;
+  onChange: (s: ResponseStyle) => void;
+}) {
+  return (
+    <TooltipProvider delayDuration={400}>
+      <div className="flex items-center gap-0.5 rounded-lg bg-muted/40 border border-border/50 p-0.5">
+        {STYLES.map(({ value: v, label, icon: Icon, tip }) => {
+          const active = value === v;
+          return (
+            <Tooltip key={v}>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => onChange(v)}
+                  className={cn(
+                    'flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium transition-all duration-150',
+                    active
+                      ? 'bg-background text-foreground shadow-sm border border-border/60'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-muted/60',
+                  )}
+                >
+                  <Icon className="size-3" weight={active ? 'fill' : 'regular'} />
+                  <span>{label}</span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-xs">{tip}</TooltipContent>
+            </Tooltip>
+          );
+        })}
+      </div>
+    </TooltipProvider>
+  );
 }
 
 function ChatWindowInner({
@@ -218,7 +263,10 @@ function ChatWindowInner({
             </span>
           )}
         </div>
-        <VoiceToggle enabled={voiceMode} onToggle={setVoiceMode} credits={voiceCredits} />
+        <div className="flex items-center gap-2">
+          <StyleSwitcher value={responseStyle} onChange={setResponseStyle} />
+          <VoiceToggle enabled={voiceMode} onToggle={setVoiceMode} credits={voiceCredits} />
+        </div>
       </div>
 
       <AudioPlayerBar
@@ -277,8 +325,6 @@ function ChatWindowInner({
         onAbort={abort}
         isLoading={isLoading || isPolling}
         disabled={!conversationId && !documentId}
-        responseStyle={responseStyle}
-        onResponseStyleChange={setResponseStyle}
         placeholder={
           !conversationId && !documentId
             ? 'Select a document to start chatting…'

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabaseFetch } from '@/lib/supabase';
 import { Message } from '@/lib/types';
 
@@ -16,18 +16,29 @@ export function useMessages(conversationId: string | null): UseMessagesReturn {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const previousIdRef = useRef<string | null>(null);
 
   const fetchMessages = useCallback(async () => {
     if (!conversationId) {
+      previousIdRef.current = null;
       setMessages([]);
       return;
     }
+
+    // Track whether we're transitioning from no-conversation → new conversation
+    const isNewConversation = previousIdRef.current === null;
+    previousIdRef.current = conversationId;
+
     setLoading(true);
     try {
       const data = await supabaseFetch<Message[]>(
         `messages?conversation_id=eq.${conversationId}&order=created_at.asc`
       );
-      setMessages(data);
+      setMessages(prev => {
+        // Preserve optimistic messages added before the DB has persisted them
+        if (isNewConversation && data.length === 0 && prev.length > 0) return prev;
+        return data;
+      });
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load messages');

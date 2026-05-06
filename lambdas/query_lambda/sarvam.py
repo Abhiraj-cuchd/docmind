@@ -21,6 +21,9 @@ from shared_lambda.secrets import get_secret
 SARVAM_API_URL = "https://api.sarvam.ai/v1/chat/completions"
 SARVAM_MODEL   = "sarvam-m"
 
+MAX_RETRIES    = 3
+RETRY_DELAY    = 2
+
 STYLE_INSTRUCTIONS = {
     "concise": (
         "Write a short answer in 3-5 lines.\n"

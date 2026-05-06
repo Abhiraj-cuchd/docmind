@@ -11,6 +11,7 @@ interface UseConversationsReturn {
   loading: boolean;
   error: string | null;
   createConversation: (title?: string, documentId?: string) => Promise<Conversation | null>;
+  deleteConversation: (id: string) => Promise<boolean>;
   refresh: () => void;
 }
 
@@ -69,11 +70,25 @@ export function useConversations(): UseConversationsReturn {
     }
   }, []);
 
+  const deleteConversation = useCallback(async (id: string): Promise<boolean> => {
+    const previous = conversations;
+    setConversations(prev => prev.filter(c => c.id !== id));
+    try {
+      await supabaseFetch(`conversations?id=eq.${id}`, { method: 'DELETE' });
+      return true;
+    } catch (err) {
+      console.error('Failed to delete conversation:', err);
+      setConversations(previous);
+      return false;
+    }
+  }, [conversations]);
+
   return {
     conversations,
     loading,
     error,
     createConversation,
+    deleteConversation,
     refresh: fetchConversations,
   };
 }
