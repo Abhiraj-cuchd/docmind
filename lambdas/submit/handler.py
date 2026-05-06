@@ -198,6 +198,10 @@ def handle_query(event: dict) -> dict:
     query           = body.get("question", "").strip()
     conversation_id = body.get("conversation_id", "").strip()
     voice_mode      = body.get("voice_mode", False)
+    response_style  = body.get("response_style", "explanatory")
+
+    if response_style not in {"concise", "explanatory", "conversational"}:
+        response_style = "explanatory"
 
     if not query:
         return _error_response(400, "question field is required")
@@ -254,16 +258,23 @@ def handle_query(event: dict) -> dict:
     # CONCEPT: User- and document-scoped cache key — different
     # documents avoid cross-contaminating answers.
     r         = get_redis_client()
-    cache_key = _make_cache_key(user_id, query, conversation.get("document_id"))
-    cached    = r.get(cache_key)
+    cache_key = _make_cache_key(user_id, query, conversation.get("document_id"), response_style)
+    cached_raw = r.get(cache_key)
 
-    if cached:
+    if cached_raw:
         print(f"[Submit] Cache hit — returning instantly")
+        try:
+            cached = json.loads(cached_raw)
+            cached_answer = cached["answer"]
+            cached_sources = cached.get("sources", [])
+        except (json.JSONDecodeError, KeyError, TypeError):
+            cached_answer = cached_raw
+            cached_sources = []
 
         voice_url  = None
         voice_urls = None
         if voice_mode:
-            voice_urls = _handle_voice(user_id, cached)
+            voice_urls = _handle_voice(user_id, cached_answer)
             if voice_urls:
                 voice_url = voice_urls[0]
 
@@ -271,13 +282,14 @@ def handle_query(event: dict) -> dict:
             conversation_id=conversation_id,
             user_id=user_id,
             user_message=query,
-            assistant_message=cached,
+            assistant_message=cached_answer,
         )
 
         return _success_response({
             "job_id":      None,
             "status":      "done",
-            "answer":      cached,
+            "answer":      cached_answer,
+            "sources":     cached_sources,
             "cached":      True,
             "voice_url":   voice_url,
             "voice_urls":  voice_urls,
@@ -304,6 +316,7 @@ def handle_query(event: dict) -> dict:
         "user_id":         user_id,
         "conversation_id": conversation_id,
         "voice_mode":      bool(voice_mode),
+        "response_style":  response_style,
     }
 
     sqs_client.send_message(
@@ -558,10 +571,10 @@ def _save_exchange(
         print(f"[Submit] Warning: failed to save exchange: {e}")
 
 
-def _make_cache_key(user_id: str, query: str, document_id: str | None) -> str:
+def _make_cache_key(user_id: str, query: str, document_id: str | None, style: str) -> str:
     h = hashlib.sha256(query.lower().strip().encode()).hexdigest()
     doc_part = document_id or "none"
-    return f"cache:{user_id}:{doc_part}:{h}"
+    return f"cache:{user_id}:{doc_part}:{style}:{h}"
 
 
 def _success_response(body: dict) -> dict:

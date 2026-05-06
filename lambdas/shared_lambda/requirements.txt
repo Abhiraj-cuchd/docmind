@@ -22,6 +22,7 @@ hyperframe==6.1.0
 idna==3.13
 jmespath==1.1.0
 multidict==6.7.1
+numpy==1.26.4
 packaging==26.2
 postgrest==1.1.1
 propcache==0.4.1

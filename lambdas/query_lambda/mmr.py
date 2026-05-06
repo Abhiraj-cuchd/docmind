@@ -24,7 +24,7 @@
 # Python lists of floats before any arithmetic can be done on them.
 # This is the root cause of the TypeError we fixed here.
 
-import math
+import numpy as np
 
 
 def mmr_rerank(
@@ -180,29 +180,15 @@ def cosine_similarity(vec_a, vec_b) -> float:
     in Python arithmetic — they must be converted to list[float] first.
     """
 
-    # Parse both vectors defensively
-    vec_a = _parse_vector(vec_a)
-    vec_b = _parse_vector(vec_b)
+    a = np.array(_parse_vector(vec_a), dtype=np.float32)
+    b = np.array(_parse_vector(vec_b), dtype=np.float32)
 
-    if not vec_a or not vec_b:
+    if a.size == 0 or b.size == 0 or len(a) != len(b):
         return 0.0
 
-    if len(vec_a) != len(vec_b):
-        print(f"[MMR] Warning: vector dimension mismatch "
-              f"({len(vec_a)} vs {len(vec_b)}) — returning 0.0")
-        return 0.0
-
-    # Dot product: sum of element-wise products
-    dot_product = sum(float(a) * float(b) for a, b in zip(vec_a, vec_b))
-
-    # Magnitudes
-    magnitude_a = math.sqrt(sum(float(a) * float(a) for a in vec_a))
-    magnitude_b = math.sqrt(sum(float(b) * float(b) for b in vec_b))
-
-    if magnitude_a == 0.0 or magnitude_b == 0.0:
-        return 0.0
-
-    return dot_product / (magnitude_a * magnitude_b)
+    # Vectors are already normalized by Titan (normalize=True)
+    # so magnitude is always 1.0 — dot product equals cosine similarity.
+    return float(np.dot(a, b))
 
 
 def _parse_vector(vec) -> list[float]:

@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import {
   FileText, Upload, AlertCircle,
   CheckCircle, Loader2,
-  ExternalLink, RefreshCw, ArrowLeft
+  ExternalLink, RefreshCw, ArrowLeft, X
 } from 'lucide-react'
+import type { Source } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
@@ -38,6 +39,8 @@ interface DocumentPanelProps {
   userId: string
   activeDocumentId: string | null
   onDocumentSelect: (documentId: string, filename?: string) => void
+  activeSource?: Source | null
+  onClearActiveSource?: () => void
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -166,6 +169,8 @@ export default function DocumentPanel({
   userId,
   activeDocumentId,
   onDocumentSelect,
+  activeSource,
+  onClearActiveSource,
 }: DocumentPanelProps) {
   const [documents, setDocuments]     = useState<Document[]>([])
   const [loading, setLoading]         = useState(true)
@@ -221,6 +226,12 @@ export default function DocumentPanel({
     }
   }, [documents, activeDocumentId])
 
+  useEffect(() => {
+    if (!activeSource) return
+    const doc = documents.find(d => d.id === activeSource.document_id)
+    if (doc?.status === 'ready') setPreviewDoc(doc)
+  }, [activeSource, documents])
+
   // ── Fetch presigned URL when previewDoc changes ─────────────────
   useEffect(() => {
     if (!previewDoc) {
@@ -267,6 +278,13 @@ export default function DocumentPanel({
     }
   }, [onDocumentSelect])
 
+  const iframeSrc = useMemo(() => {
+    if (!pdfUrl) return null
+    const page = activeSource?.page_number
+    const pageParam = page ? `page=${page}&` : ''
+    return `${pdfUrl}#${pageParam}toolbar=0&navpanes=0&scrollbar=0&pagemode=none&view=FitH&zoom=page-width`
+  }, [pdfUrl, activeSource])
+
   // ── Preview pane (full panel) ────────────────────────────────────
   if (previewDoc) {
     return (
@@ -307,6 +325,29 @@ export default function DocumentPanel({
           </div>
         </div>
 
+        {/* Active source snippet strip */}
+        {activeSource && (
+          <div className="px-3 py-2 border-b border-zinc-800 bg-zinc-800/40 shrink-0">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-xs text-zinc-500 mb-1">
+                  Source · {activeSource.page_number ? `Page ${activeSource.page_number}` : activeSource.filename}
+                  {activeSource.section && ` · ${activeSource.section}`}
+                </p>
+                <p className="text-xs text-zinc-300 leading-relaxed line-clamp-3">
+                  {activeSource.snippet}
+                </p>
+              </div>
+              <button
+                onClick={() => onClearActiveSource?.()}
+                className="p-1 rounded text-zinc-600 hover:text-zinc-400 shrink-0"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Iframe fills all remaining height */}
         <div className="flex-1 overflow-hidden bg-zinc-950">
           {pdfLoading && (
@@ -326,9 +367,9 @@ export default function DocumentPanel({
             </div>
           )}
 
-          {pdfUrl && !pdfLoading && !pdfError && (
+          {iframeSrc && !pdfLoading && !pdfError && (
             <iframe
-              src={`${pdfUrl}#toolbar=0&navpanes=0&scrollbar=0&pagemode=none&view=FitH&zoom=page-width`}
+              src={iframeSrc}
               className="w-full h-full"
               title={previewDoc.filename}
             />

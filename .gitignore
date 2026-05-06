@@ -15,3 +15,6 @@ __pycache__/
 frontend/node_modules
 infrastructure/cdk.out
 __tests__/*
+.codex
+CLAUDE.md
+context.md

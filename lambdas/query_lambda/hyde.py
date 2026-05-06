@@ -102,9 +102,9 @@ def _generate_hypothetical_answer(query: str) -> str:
 
     sarvam_api_key = get_secret("SARVAM_API_KEY_RAG")
 
-    hyde_prompt = f"""Write a short 2-3 sentence passage that directly 
-answers the following question. Write it as if it were an excerpt 
-from a textbook or research paper. Be factual and specific.
+    hyde_prompt = f"""Write a textbook passage that teaches the following concept.
+Include: what it is, how it works, and a concrete example.
+Be specific and factual.
 
 Question: {query}
 
@@ -120,7 +120,7 @@ Passage:"""
             json={
                 "model":       SARVAM_MODEL,
                 "messages":    [{"role": "user", "content": hyde_prompt}],
-                "max_tokens":  200,
+                "max_tokens":  300,
                 "temperature": 0.7,
             },
             timeout=30,

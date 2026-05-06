@@ -47,7 +47,7 @@ class ChatErrorBoundary extends Component<
 }
 
 import { useEffect, useRef, useState } from 'react';
-import { Message } from '@/lib/types';
+import { Message, ResponseStyle, Source } from '@/lib/types';
 import { useMessages } from '@/hooks/useMessages';
 import { useRAGQuery } from '@/hooks/useRAGQuery';
 import { useAudioPlayer } from '@/hooks/useAudioPlayer';
@@ -67,6 +67,7 @@ interface ChatWindowProps {
   createConversation?: (title: string, documentId?: string) => Promise<import('@/lib/types').Conversation | null>;
   onConversationCreated?: (id: string) => void;
   onBack?: () => void;
+  onSourceClick?: (source: Source) => void;
 }
 
 function ChatWindowInner({
@@ -75,6 +76,7 @@ function ChatWindowInner({
   createConversation,
   onConversationCreated,
   onBack,
+  onSourceClick,
 }: ChatWindowProps) {
   const { messages, loading, addMessage } = useMessages(conversationId);
   const { submit, isLoading, isPolling, abort } = useRAGQuery();
@@ -82,6 +84,7 @@ function ChatWindowInner({
   const [voiceMode, setVoiceMode] = useState(false);
   const [voiceCredits, setVoiceCredits] = useState<number | undefined>(undefined);
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
+  const [responseStyle, setResponseStyle] = useState<ResponseStyle>('explanatory');
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll on new messages
@@ -93,6 +96,17 @@ function ChatWindowInner({
   useEffect(() => {
     return () => abort();
   }, [abort]);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem('rag_response_style');
+    if (saved === 'concise' || saved === 'explanatory' || saved === 'conversational') {
+      setResponseStyle(saved);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem('rag_response_style', responseStyle);
+  }, [responseStyle]);
 
   const handleSubmit = async (question: string) => {
     let convId = conversationId;
@@ -126,7 +140,12 @@ function ChatWindowInner({
     addMessage(userMsg);
 
     try {
-      const result = await submit({ question, conversation_id: convId, voice_mode: voiceMode });
+      const result = await submit({
+        question,
+        conversation_id: convId,
+        voice_mode: voiceMode,
+        response_style: responseStyle,
+      });
       if (!result) return;
 
       // Update voice credits if returned
@@ -242,6 +261,7 @@ function ChatWindowInner({
                 }}
                 onStreamProgress={() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' })}
                 onPlayVoice={player.play}
+                onSourceClick={onSourceClick}
               />
             ))
           )}
@@ -257,6 +277,8 @@ function ChatWindowInner({
         onAbort={abort}
         isLoading={isLoading || isPolling}
         disabled={!conversationId && !documentId}
+        responseStyle={responseStyle}
+        onResponseStyleChange={setResponseStyle}
         placeholder={
           !conversationId && !documentId
             ? 'Select a document to start chatting…'
@@ -269,7 +291,7 @@ function ChatWindowInner({
   );
 }
 
-export function ChatWindow({ conversationId, documentId, createConversation, onConversationCreated, onBack }: ChatWindowProps) {
+export function ChatWindow({ conversationId, documentId, createConversation, onConversationCreated, onBack, onSourceClick }: ChatWindowProps) {
   return (
     <ChatErrorBoundary>
       <ChatWindowInner
@@ -278,6 +300,7 @@ export function ChatWindow({ conversationId, documentId, createConversation, onC
         createConversation={createConversation}
         onConversationCreated={onConversationCreated}
         onBack={onBack}
+        onSourceClick={onSourceClick}
       />
     </ChatErrorBoundary>
   );

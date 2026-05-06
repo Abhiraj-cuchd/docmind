@@ -26,6 +26,7 @@
 import json
 import os
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 from shared_lambda.supabase_client import get_service_client, execute_hybrid_search
 from shared_lambda.rate_limiter    import (
     get_redis_client,
@@ -39,7 +40,7 @@ from shared_lambda.rate_limiter    import (
 from shared_lambda.classifier import get_conversational_response
 from hyde    import generate_hyde_embedding, embed_query
 from mmr     import mmr_rerank
-from sarvam  import needs_retrieval, generate_answer, direct_answer
+from sarvam  import needs_retrieval, generate_answer, direct_answer, rewrite_query
 from history import (
     fetch_conversation_history,
     save_user_message,
@@ -68,7 +69,7 @@ HYDE_CONFIDENCE_THRESHOLD = 0.02
 # 0.005 is deliberately low — only filters truly irrelevant queries.
 MIN_USEFUL_RRF_SCORE = 0.005
 
-MMR_TOP_K  = 3
+MMR_TOP_K  = 5
 MMR_LAMBDA = 0.7
 
 supabase = get_service_client()
@@ -97,6 +98,7 @@ def _process_record(record: dict) -> None:
     user_id         = body["user_id"]
     conversation_id = body["conversation_id"]
     voice_mode      = body.get("voice_mode", False)
+    response_style  = body.get("response_style", "explanatory")
     document_id     = _get_conversation_document_id(conversation_id, user_id)
 
     print(f"[Handler] Job {job_id}: '{query[:80]}'")
@@ -132,12 +134,19 @@ def _process_record(record: dict) -> None:
         # ── Step 1: Cache check (free — Redis) ─────────────────────
         # CONCEPT: User-scoped cache key — different users asking the
         # same question get answers from their own documents.
-        cache_key     = _make_cache_key(user_id, query, document_id)
-        cached_answer = r.get(cache_key)
+        cache_key = _make_cache_key(user_id, query, document_id, response_style)
+        cached_raw = r.get(cache_key)
 
-        if cached_answer:
+        if cached_raw:
             print(f"[Handler] Cache hit — 0 tokens consumed")
-            voice_url  = None
+            try:
+                cached = json.loads(cached_raw)
+                cached_answer = cached["answer"]
+                cached_sources = cached.get("sources", [])
+            except (json.JSONDecodeError, KeyError, TypeError):
+                cached_answer = cached_raw
+                cached_sources = []
+            voice_url = None
             voice_urls = None
             if voice_mode:
                 voice_urls = _handle_voice(user_id, cached_answer)
@@ -146,6 +155,7 @@ def _process_record(record: dict) -> None:
             _write_result(r, job_id, {
                 "status":                  "done",
                 "answer":                  cached_answer,
+                "sources":                 cached_sources,
                 "cached":                  True,
                 "voice_url":               voice_url,
                 "voice_urls":              voice_urls,
@@ -156,10 +166,15 @@ def _process_record(record: dict) -> None:
             return
 
         # ── Step 2: Save user message ──────────────────────────────
-        save_user_message(conversation_id, user_id, query)
-
         # ── Step 3: Fetch history (free) ───────────────────────────
-        history = fetch_conversation_history(conversation_id, user_id)
+        with ThreadPoolExecutor(max_workers=2) as ex:
+            save_future = ex.submit(save_user_message, conversation_id, user_id, query)
+            history_future = ex.submit(fetch_conversation_history, conversation_id, user_id)
+        history = history_future.result()
+        save_future.result()
+
+        # Rewrite ambiguous follow-up queries before embedding
+        search_query = rewrite_query(query, history)
 
         # ── Step 4: Smart routing decision ─────────────────────────
         # CONCEPT: Two paths depending on document availability.
@@ -198,7 +213,7 @@ def _process_record(record: dict) -> None:
                 if not rag_acquired:
                     raise Exception("RATE_LIMIT_WAIT")
 
-                answer       = direct_answer(query, history)
+                answer       = direct_answer(query, history, response_style)
                 tokens_used += 2
 
                 _finish(
@@ -220,15 +235,15 @@ def _process_record(record: dict) -> None:
 
         # ── Step 5: Embed query (free — Amazon Titan) ──────────────
         print(f"[Handler] Embedding query (Titan — free)")
-        direct_embedding = embed_query(query)
+        direct_embedding = embed_query(search_query)
 
         # ── Step 6: Hybrid search (free — Supabase HNSW + BM25) ───
         print(f"[Handler] Running hybrid search (Supabase — free)")
         candidates = execute_hybrid_search(
             user_id=user_id,
             query_embedding=direct_embedding,
-            query_text=query,
-            match_count=10,
+            query_text=search_query,
+            match_count=20,
             document_id=document_id,
         )
 
@@ -242,7 +257,7 @@ def _process_record(record: dict) -> None:
             if not rag_acquired:
                 raise Exception("RATE_LIMIT_WAIT")
 
-            answer       = direct_answer(query, history)
+            answer       = direct_answer(query, history, response_style)
             tokens_used += 2
             _finish(
                 r=r, job_id=job_id, query=query,
@@ -277,7 +292,7 @@ def _process_record(record: dict) -> None:
             if not rag_acquired:
                 raise Exception("RATE_LIMIT_WAIT")
 
-            answer       = direct_answer(query, history)
+            answer       = direct_answer(query, history, response_style)
             tokens_used += 2
             _finish(
                 r=r, job_id=job_id, query=query,
@@ -306,8 +321,8 @@ def _process_record(record: dict) -> None:
                 hyde_candidates = execute_hybrid_search(
                     user_id=user_id,
                     query_embedding=hyde_embedding,
-                    query_text=query,    # keep original for BM25 side
-                    match_count=10,
+                    query_text=search_query,
+                    match_count=20,
                     document_id=document_id,
                 )
 
@@ -363,6 +378,7 @@ def _process_record(record: dict) -> None:
             query=query,
             context_chunks=top_chunks,
             history=history,
+            style=response_style,
         )
 
         # ── Step 14: Finish ────────────────────────────────────────
@@ -458,15 +474,28 @@ def _finish(
 
     update_conversation_timestamp(conversation_id)
 
+    sources = [
+        {
+            "chunk_id":    c.get("id"),
+            "document_id": c.get("document_id"),
+            "page_number": c["metadata"].get("page_number"),
+            "filename":    c["metadata"].get("filename"),
+            "section":     c["metadata"].get("section"),
+            "snippet":     c.get("content", "")[:250],
+        }
+        for c in retrieved_chunks
+    ]
+
     # Cache all answers including fallbacks
     # If doc doesn't have 2+2 now, it never will — safe to cache
-    r.setex(cache_key, CACHE_TTL, answer)
+    r.setex(cache_key, CACHE_TTL, json.dumps({"answer": answer, "sources": sources}))
     print(f"[Handler] Answer cached (TTL={CACHE_TTL}s)")
 
     _write_result(r, job_id, {
         "status":                  "done",
         "answer":                  answer,
         "cached":                  False,
+        "sources":                 sources,
         "voice_url":               voice_url,
         "voice_urls":              voice_urls,
         "voice_credits_remaining": _get_voice_credits(user_id),
@@ -542,10 +571,10 @@ def _handle_voice(user_id: str, answer: str) -> list[str] | None:
         return None
 
 
-def _make_cache_key(user_id: str, query: str, document_id: str | None) -> str:
+def _make_cache_key(user_id: str, query: str, document_id: str | None, style: str) -> str:
     h = hashlib.sha256(query.lower().strip().encode()).hexdigest()
     doc_part = document_id or "none"
-    return f"cache:{user_id}:{doc_part}:{h}"
+    return f"cache:{user_id}:{doc_part}:{style}:{h}"
 
 
 def _get_conversation_document_id(conversation_id: str, user_id: str) -> str | None:
@@ -627,3 +656,10 @@ def _split_tts_chunks(text: str, max_chars: int) -> list[str]:
         chunks.append(buffer)
 
     return chunks
+
+
+
+
+
+
+

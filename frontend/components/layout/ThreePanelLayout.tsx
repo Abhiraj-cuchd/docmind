@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { ChatWindow } from './ChatWindow';
 import DocumentPanel from './DocumentPanel';
 import { useConversations } from '@/hooks/useConversations';
 import { useAuth } from '@/hooks/useAuth';
+import { Source } from '@/lib/types';
 
 interface ThreePanelLayoutProps {
   activeConversationId: string | null;
@@ -24,6 +25,8 @@ export function ThreePanelLayout({
   const { createConversation } = useConversations();
   const { user } = useAuth();
   const conversationByDocumentIdRef = useRef<Record<string, string>>({});
+  const [activeSource, setActiveSource] = useState<Source | null>(null);
+
   const handleSelectDocument = useCallback((documentId: string) => {
     if (documentId === activeDocumentId) {
       // Same document clicked — start a new conversation on it
@@ -40,6 +43,13 @@ export function ThreePanelLayout({
     setSelection({ conversationId: null, documentId });
   }, [activeDocumentId, setSelection]);
 
+  const handleSourceClick = useCallback((source: Source) => {
+    if (source.document_id && source.document_id !== activeDocumentId) {
+      handleSelectDocument(source.document_id);
+    }
+    setActiveSource(source);
+  }, [activeDocumentId, handleSelectDocument]);
+
   return (
     <div className="flex h-full overflow-hidden bg-background animate-in fade-in-0 duration-300">
       {/* Center panel — chat */}
@@ -55,6 +65,7 @@ export function ThreePanelLayout({
             updateSelection({ conversationId: convId });
           }}
           onBack={onBack}
+          onSourceClick={handleSourceClick}
         />
       </main>
 
@@ -66,6 +77,8 @@ export function ThreePanelLayout({
           onDocumentSelect={(documentId) => {
             void handleSelectDocument(documentId);
           }}
+          activeSource={activeSource}
+          onClearActiveSource={() => setActiveSource(null)}
         />
       </aside>
     </div>

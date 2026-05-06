@@ -21,15 +21,40 @@ from shared_lambda.secrets import get_secret
 SARVAM_API_URL = "https://api.sarvam.ai/v1/chat/completions"
 SARVAM_MODEL   = "sarvam-m"
 
-# Retry settings for transient failures
-MAX_RETRIES    = 3
-RETRY_DELAY    = 2   # seconds, doubles each retry
+STYLE_INSTRUCTIONS = {
+    "concise": (
+        "Write a short answer in 3-5 lines.\n"
+        "No bullets, no sections, no extra explanation.\n"
+        "Only include the most important information."
+    ),
+    "explanatory": (
+        "You MUST follow this exact structure:\n"
+        "Answer:<1-2 line direct answer>\n"
+        "Explanation:\n"
+        "- What it is: <1-2 lines>\n"
+        "- How it works: <2-3 lines>\n"
+        "- Why it matters: <1-2 lines>\n"
+        "Rules:\n"
+        "- Always include all three sections\n"
+        "- Keep explanations concise but clear\n"
+        "- Do not skip sections\n"
+        "- Do not write long paragraphs"
+    ),
+    "conversational": (
+        "Explain like you're talking to a friend.\n"
+        "- Use simple language\n"
+        "- Use analogies if helpful\n"
+        "- Avoid structured sections\n"
+        "- Keep it natural and easy to follow"
+    ),
+}
 
 
 def generate_answer(
     query:          str,
     context_chunks: list[dict],
     history:        list[dict],
+    style:          str = "explanatory",
 ) -> str:
     """
     Generates a RAG answer from retrieved context chunks.
@@ -48,7 +73,7 @@ def generate_answer(
     information that isn't in the retrieved chunks.
     """
 
-    prompt = _build_rag_prompt(query, context_chunks, history)
+    prompt = _build_rag_prompt(query, context_chunks, history, style)
 
     print(f"[Sarvam] Generating RAG answer for: '{query[:80]}'")
     print(f"[Sarvam] Context: {len(context_chunks)} chunks, "
@@ -57,13 +82,7 @@ def generate_answer(
     raw_response = _call_sarvam(
         messages=[{"role": "user", "content": prompt}],
         max_tokens=1024,
-        temperature=0.3,
-        # CONCEPT: temperature=0.3 for RAG generation.
-        # Lower temperature = more focused, less creative.
-        # We want factual answers grounded in the context,
-        # not creative elaboration. 0.3 is a good balance —
-        # deterministic enough to stay on-topic, not so rigid
-        # that the answer reads like a list of bullet points.
+        temperature=0.5,
     )
 
     answer = _strip_think_tags(raw_response)
@@ -72,7 +91,7 @@ def generate_answer(
     return answer
 
 
-def direct_answer(query: str, history: list[dict]) -> str:
+def direct_answer(query: str, history: list[dict], style: str = "explanatory") -> str:
     """
     Generates an answer directly without retrieved context.
     Used when the query is a general knowledge question that
@@ -88,14 +107,7 @@ def direct_answer(query: str, history: list[dict]) -> str:
 
     print(f"[Sarvam] Generating direct answer for: '{query[:80]}'")
 
-    history_text = _format_history(history)
-
-    prompt = f"""You are a helpful assistant. Answer the following 
-question concisely and accurately using your own knowledge.
-{history_text}
-Question: {query}
-
-Answer:"""
+    prompt = _build_direct_prompt(query, history, style)
 
     raw_response = _call_sarvam(
         messages=[{"role": "user", "content": prompt}],
@@ -107,6 +119,58 @@ Answer:"""
     print(f"[Sarvam] Direct answer generated ({len(answer)} chars)")
     return answer
 
+
+
+def rewrite_query(query: str, history: list[dict]) -> str:
+    if not history:
+        return query
+
+    # --- Normalize words ---
+    words = set(re.findall(r"\b\w+\b", query.lower()))
+
+    pronouns = {
+        "it", "this", "that", "they", "them", "its",
+        "these", "those", "he", "she",
+    }
+
+    vague_patterns = {"how", "why", "explain", "what", "tell"}
+
+    is_short = len(query.split()) <= 10
+    has_pronoun = bool(words & pronouns)
+    is_vague = any(word in words for word in vague_patterns)
+
+    # --- Skip unnecessary rewrites ---
+    if not (is_short or has_pronoun or is_vague):
+        return query
+
+    # --- Limit history (token optimization) ---
+    history = history[-3:]
+    history_text = _format_history(history)
+
+    prompt = (
+        "Rewrite the query into a complete, standalone search query.\n"
+        "Resolve references using history. Keep meaning same.\n"
+        "Output only the query.\n\n"
+        f"{history_text}\n"
+        f"Query: {query}\n"
+        "Rewritten:"
+    )
+
+    raw = _call_sarvam(
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=80,
+        temperature=0.0,
+    )
+
+    rewritten = _strip_think_tags(raw).strip()
+
+    # --- Safety fallback ---
+    if not rewritten or len(rewritten) > 200:
+        return query
+
+    print(f"[Rewrite] '{query[:50]}' -> '{rewritten[:50]}'")
+
+    return rewritten
 # lambdas/query_lambda/sarvam.py
 # Fix needs_retrieval() — search for YES/NO in full response
 # including inside think tags
@@ -169,6 +233,7 @@ def _build_rag_prompt(
     query:          str,
     context_chunks: list[dict],
     history:        list[dict],
+    style:          str = "explanatory",
 ) -> str:
     """
     Builds the full RAG prompt with context and history.
@@ -188,30 +253,34 @@ def _build_rag_prompt(
     # Format retrieved chunks as a numbered list
     # CONCEPT: Numbering helps the model reference specific chunks
     # and makes the context block scannable.
-    context_block = "\n\n".join([
-        f"[Chunk {i+1} — "
-        f"Page {chunk['metadata'].get('page_number', '?')} of "
-        f"{chunk['metadata'].get('filename', 'document')}]\n"
-        f"{chunk['content']}"
-        for i, chunk in enumerate(context_chunks)
-    ])
+    context_lines = []
+    for i, chunk in enumerate(context_chunks):
+        section = chunk["metadata"].get("section", "")
+        section_part = f" | Section: {section}" if section else ""
+        context_lines.append(
+            f"[Chunk {i+1} - Page {chunk['metadata'].get('page_number', '?')}"
+            f"{section_part} | {chunk['metadata'].get('filename', 'document')}]\n"
+            f"{chunk['content']}"
+        )
+    context_block = "\n\n".join(context_lines)
 
     history_text = _format_history(history)
 
-    prompt = f"""You are a helpful assistant that answers questions \
-based on the provided document context.
+    style_block = STYLE_INSTRUCTIONS.get(style, STYLE_INSTRUCTIONS["explanatory"])
+
+    prompt = f"""You are a knowledgeable tutor helping a student understand their uploaded documents.
+
+{style_block}
+
+Context usage:
+- Use retrieved chunks as the primary source
+- Combine multiple chunks into one coherent explanation
+- Simplify fragmented context
 
 Rules:
-- Prefer answering from the document context chunks below
-- If the context contains the answer, use it and cite the relevant \
-chunk or page
-- If the context does NOT contain the answer, first state that clearly, \
-then provide the answer from your own general knowledge using this exact \
-format: "This was not found in your documents. Based on my knowledge: \
-[your answer]"
-- Never fabricate document content — only attribute information to the \
-document if it actually appears in the context chunks
-- Be concise and specific
+- Do NOT say "based on the context"
+- If not found in documents: "This is not clearly covered in your document. Based on my knowledge: [answer]"
+- Never fabricate document content
 {history_text}
 Document context:
 {context_block}
@@ -238,6 +307,19 @@ def _format_history(history: list[dict]) -> str:
         lines.append(f"{label}: {msg['content']}")
 
     return "\n".join(lines) + "\n"
+
+
+def _build_direct_prompt(query: str, history: list[dict], style: str) -> str:
+    history_text = _format_history(history)
+    style_block = STYLE_INSTRUCTIONS.get(style, STYLE_INSTRUCTIONS["explanatory"])
+
+    return f"""You are a helpful assistant. Answer the following question accurately using your own knowledge.
+
+{style_block}
+{history_text}
+Question: {query}
+
+Answer:"""
 
 
 def _strip_think_tags(text: str) -> str:

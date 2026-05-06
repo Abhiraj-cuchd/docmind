@@ -9,10 +9,12 @@ export interface Conversation {
 }
 
 export interface Source {
+  chunk_id: string | null;
+  document_id: string | null;
+  page_number: number | null;
   filename: string;
-  page: number;
-  score?: number;
-  chunk_text?: string;
+  section: string | null;
+  snippet: string;
 }
 
 export interface Message {
@@ -25,7 +27,7 @@ export interface Message {
   voice_urls?: string[] | null;
   voice_credits_remaining?: number;
   tokens_used?: number;
-  path?: 'rag' | 'direct' | 'cache' | 'conversational';
+  path?: 'rag' | 'direct' | 'cache' | 'conversational' | 'rag_fallback';
   cached?: boolean;
   created_at: string;
 }
@@ -48,6 +50,7 @@ export interface QueryRequest {
   question: string;
   conversation_id: string;
   voice_mode: boolean;
+  response_style?: ResponseStyle;
 }
 
 export interface QueryResponse {
@@ -59,7 +62,7 @@ export interface QueryResponse {
   voice_urls?: string[] | null;
   voice_credits_remaining?: number;
   tokens_used?: number;
-  path?: 'rag' | 'direct' | 'cache' | 'conversational';
+  path?: 'rag' | 'direct' | 'cache' | 'conversational' | 'rag_fallback';
   sources?: Source[];
 }
 
@@ -71,7 +74,7 @@ export interface PollResult {
   voice_urls?: string[] | null;
   voice_credits_remaining: number;
   tokens_used: number;
-  path: 'rag' | 'direct' | 'cache' | 'conversational';
+  path: 'rag' | 'direct' | 'cache' | 'conversational' | 'rag_fallback';
   sources?: Source[];
 }
 
@@ -79,3 +82,5 @@ export interface UploadPresignResponse {
   presigned_url: string;
   document_id: string;
 }
+
+export type ResponseStyle = 'concise' | 'explanatory' | 'conversational';

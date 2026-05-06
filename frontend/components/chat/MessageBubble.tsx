@@ -13,6 +13,7 @@ interface MessageBubbleProps {
   onStreamComplete?: (messageId: string) => void;
   onStreamProgress?: () => void;
   onPlayVoice?: (urls: string[]) => void;
+  onSourceClick?: (source: import('@/lib/types').Source) => void;
 }
 
 const PATH_LABELS: Record<string, { label: string; color: string }> = {
@@ -23,7 +24,7 @@ const PATH_LABELS: Record<string, { label: string; color: string }> = {
   rag_fallback: { label: 'General Knowledge', color: 'bg-orange-500/15 text-orange-400 border-orange-500/20' },
 };
 
-export function MessageBubble({ message, isStreaming, onStreamComplete, onStreamProgress, onPlayVoice }: MessageBubbleProps) {
+export function MessageBubble({ message, isStreaming, onStreamComplete, onStreamProgress, onPlayVoice, onSourceClick }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const pathInfo = message.path ? PATH_LABELS[message.path] : null;
   const [displayText, setDisplayText] = useState(message.content);
@@ -104,7 +105,7 @@ export function MessageBubble({ message, isStreaming, onStreamComplete, onStream
 
           {/* Citations for assistant messages */}
           {!isUser && message.sources && message.sources.length > 0 && (
-            <Citations sources={message.sources} />
+            <Citations sources={message.sources} onSourceClick={onSourceClick} />
           )}
         </div>
 

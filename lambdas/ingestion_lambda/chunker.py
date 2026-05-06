@@ -47,8 +47,8 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 def chunk_pages(
     pages:         list[dict],
-    chunk_size:    int = 400,
-    chunk_overlap: int = 100,
+    chunk_size:    int = 600,
+    chunk_overlap: int = 150,
 ) -> list[dict]:
     """
     Splits all extracted pages into overlapping chunks.
@@ -62,16 +62,16 @@ def chunk_pages(
     position within page. This order is preserved into Supabase
     so chunk_index reflects true document order.
 
-    CONCEPT: Why 500 characters and 50 overlap?
+    CONCEPT: Why 600 characters and 150 overlap?
     From your Phase 1 experiments in CLAUDE.md:
       chunk_size=200  → loses context across boundaries
       chunk_size=1000 → too much noise per chunk
-      chunk_size=500  → best default for lecture-note style PDFs
-      overlap=50      → enough to bridge boundary sentences
+      chunk_size=600  → best default for lecture-note style PDFs
+      overlap=150     → enough to bridge boundary sentences
     These aren't arbitrary — they came from your own measurements.
 
     CONCEPT: Why RecursiveCharacterTextSplitter over simple slicing?
-    Simple slicing cuts at exactly 500 characters regardless of
+    Simple slicing cuts at exactly 600 characters regardless of
     where a sentence or paragraph ends:
       "...the gradient descent algorithm converges when the loss
       fu" ← cuts mid-word. Next chunk starts "nction reaches..."
@@ -98,7 +98,7 @@ def chunk_pages(
         # chunk size. len() counts characters, not tokens.
         # Character counting is consistent across all text —
         # token counting varies by model and adds a dependency.
-        # At chunk_size=500 chars, you get roughly 100-150 tokens
+        # At chunk_size=600 chars, you get roughly 100-150 tokens
         # which is well within Voyage AI's 4096 token limit.
         length_function=len,
     )
