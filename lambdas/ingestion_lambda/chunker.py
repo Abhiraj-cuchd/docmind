@@ -1,179 +1,144 @@
-# lambdas/indexer/chunker.py
+# lambdas/ingestion_lambda/chunker.py
 #
-# Responsibility: split extracted pages into overlapping chunks.
-# Each chunk is one unit that gets embedded and stored in Supabase.
+# Section-aware, cross-page document chunker.
 #
-# Receives: the "pages" list from extractor.py's return value
-# Returns:  a flat list of chunks ready for embedder.py
+# Processing order:
+#   1. structure_detector.detect_sections(pages)
+#        → flat list of Section objects (prose/code/list/table)
+#        → headings consumed and attached to the section below them
+#   2. For each section, pick a splitter based on content_type:
+#        prose/list/table → RecursiveCharacterTextSplitter (paragraph-first)
+#        code             → RecursiveCharacterTextSplitter (function-first)
+#   3. Hard boundary at every section edge — no overlap bleeds across sections
+#   4. Continuation bridge: if the first sentence of a section starts
+#        with a lowercase letter (likely a mid-sentence page break), prepend
+#        the last sentence of the previous chunk as a 1-sentence bridge
+#   5. Each chunk prefixed with "[Page N][Section: heading]" for BM25
+#   6. Metadata: page_number, page_number_end, pages[], heading,
+#        section_id, content_type, chunk_index
 #
-# SQS context: this file sits between extractor.py and embedder.py
-# in the pipeline. handler.py calls it after extraction completes.
-#
-# Input shape (one item from extractor.py's "pages" list):
-# {
-#     "page_number": 4,
-#     "text":        "Support Vector Machines work by finding...",
-#     "char_count":  1842,
-#     "metadata": {
-#         "filename":    "lecture_notes.pdf",
-#         "s3_key":      "uploads/.../lecture_notes.pdf",
-#         "page_number": 4,
-#         "total_pages": 52,
-#         "has_images":  False,
-#         "has_tables":  True,
-#     }
-# }
-#
-# Output shape (one chunk ready for embedder.py):
-# {
-#     "content":  "Support Vector Machines work by finding the optimal...",
-#     "metadata": {
-#         "filename":    "lecture_notes.pdf",
-#         "s3_key":      "uploads/.../lecture_notes.pdf",
-#         "page_number": 4,
-#         "total_pages": 52,
-#         "has_images":  False,
-#         "has_tables":  True,
-#         "chunk_index": 7,
-#         "chunk_on_page": 2,
-#         "char_start":  500,
-#         "char_end":    1000,
-#         "char_count":  500,
-#     }
-# }
+# For windowed ingestion (large documents), chunk_pages() accepts an
+# optional `global_chunk_offset` so chunk_index stays globally monotonic
+# across windows.
 
+import re
+from dataclasses import dataclass
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from structure_detector import detect_sections, Section
+
+# ── Splitter configs ──────────────────────────────────────────────────
+
+_PROSE_SPLITTER_ARGS = dict(
+    separators   = ["\n\n", "\n", ". ", " ", ""],
+    length_function = len,
+    add_start_index = True,
+)
+
+_CODE_SPLITTER_ARGS = dict(
+    # Keep function/class definitions together before splitting on newlines
+    separators   = ["\nclass ", "\ndef ", "\n\n", "\n", " ", ""],
+    length_function = len,
+    add_start_index = True,
+)
+
+_SENTENCE_END = re.compile(r'(?<=[.!?])\s+')
 
 
 def chunk_pages(
-    pages:         list[dict],
-    chunk_size:    int = 600,
-    chunk_overlap: int = 150,
+    pages:              list[dict],
+    chunk_size:         int = 600,
+    chunk_overlap:      int = 150,
+    global_chunk_offset: int = 0,
 ) -> list[dict]:
     """
-    Splits all extracted pages into overlapping chunks.
+    Splits pages into semantically coherent chunks respecting structure.
 
-    Parameters:
-        pages         — the "pages" list from extractor.py
-        chunk_size    — target size of each chunk in characters
-        chunk_overlap — how many characters consecutive chunks share
+    Parameters
+    ----------
+    pages               extractor.py "pages" list
+    chunk_size          target chars per chunk
+    chunk_overlap       overlap within a section (not across sections)
+    global_chunk_offset add this to chunk_index (for windowed ingestion)
 
-    Returns a flat list of chunk dicts ordered by page then
-    position within page. This order is preserved into Supabase
-    so chunk_index reflects true document order.
-
-    CONCEPT: Why 600 characters and 150 overlap?
-    From your Phase 1 experiments in CLAUDE.md:
-      chunk_size=200  → loses context across boundaries
-      chunk_size=1000 → too much noise per chunk
-      chunk_size=600  → best default for lecture-note style PDFs
-      overlap=150     → enough to bridge boundary sentences
-    These aren't arbitrary — they came from your own measurements.
-
-    CONCEPT: Why RecursiveCharacterTextSplitter over simple slicing?
-    Simple slicing cuts at exactly 600 characters regardless of
-    where a sentence or paragraph ends:
-      "...the gradient descent algorithm converges when the loss
-      fu" ← cuts mid-word. Next chunk starts "nction reaches..."
-    RecursiveCharacterTextSplitter tries separators in priority order:
-      1. paragraph break (\\n\\n) — best split point
-      2. line break (\\n)         — good split point
-      3. space ( )                — acceptable split point
-      4. character               — last resort
-    So chunks end at natural language boundaries whenever possible.
-    This means the LLM receives coherent text, not truncated sentences.
+    Returns a flat list of chunk dicts ordered by document position.
     """
+    sections = detect_sections(pages)
 
-    # CONCEPT: We initialise the splitter once outside the loop.
-    # RecursiveCharacterTextSplitter is stateless — same instance
-    # can split any number of texts without interference.
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-        # Separators tried in order — paragraph first, then line,
-        # then word, then character. The splitter stops at the
-        # first separator that produces a chunk within chunk_size.
-        separators=["\n\n", "\n", " ", ""],
-        # CONCEPT: length_function tells the splitter how to measure
-        # chunk size. len() counts characters, not tokens.
-        # Character counting is consistent across all text —
-        # token counting varies by model and adds a dependency.
-        # At chunk_size=600 chars, you get roughly 100-150 tokens
-        # which is well within Voyage AI's 4096 token limit.
-        length_function=len,
+    if not sections:
+        raise ValueError("Structure detector produced no sections — text may be empty.")
+
+    prose_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size, chunk_overlap=chunk_overlap,
+        **_PROSE_SPLITTER_ARGS,
+    )
+    code_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size, chunk_overlap=0,   # no overlap for code
+        **_CODE_SPLITTER_ARGS,
     )
 
-    all_chunks  = []
-    chunk_index = 0   # global index across the entire document
+    all_chunks:    list[dict] = []
+    chunk_index:   int        = global_chunk_offset
+    last_sentence: str | None = None  # continuation bridge state
 
-    for page in pages:
-        page_number = page["page_number"]
-        text        = page["text"]
-        page_meta   = page["metadata"]   # already built by extractor.py
+    for sec in sections:
+        splitter = code_splitter if sec.content_type == "code" else prose_splitter
+        docs     = splitter.create_documents([sec.text])
 
-        # Split this page's text into chunks
-        # CONCEPT: split_text() returns a list of strings.
-        # Each string is one chunk — already trimmed, already within
-        # chunk_size characters, already respecting natural boundaries.
-        raw_chunks = splitter.split_text(text)
-
-        if not raw_chunks:
-            print(f"[Chunker] Page {page_number}: no chunks produced "
-                  f"(text may be too short)")
-            continue
-
-        for chunk_on_page, chunk_text in enumerate(raw_chunks):
-
-            # Skip empty or whitespace-only chunks
-            # (can happen on pages with lots of whitespace)
-            if not chunk_text.strip():
+        for doc_idx, doc in enumerate(docs):
+            raw_text = doc.page_content.strip()
+            if not raw_text:
                 continue
 
-            cleaned_text = chunk_text.strip()
+            # ── Continuation bridge ───────────────────────────────
+            # If this chunk's first word starts lowercase and we have
+            # a previous sentence, it's likely a mid-sentence page break.
+            # Prepend the last sentence for coherent context.
+            first_word = raw_text.lstrip()[0] if raw_text.lstrip() else ""
+            if (
+                doc_idx == 0
+                and last_sentence
+                and first_word.islower()
+                and sec.content_type == "prose"
+            ):
+                raw_text = f"{last_sentence} {raw_text}"
 
-            # Find where this chunk sits in the original page text.
-            # CONCEPT: We store char_start and char_end so you can
-            # later highlight the exact passage in the original PDF
-            # if you ever build a "show source" feature in the frontend.
-            char_start = text.find(cleaned_text)
-            char_end   = char_start + len(cleaned_text) if char_start != -1 else -1
+            # ── BM25-friendly prefix ──────────────────────────────
+            prefix_parts = [f"[Page {sec.page_number}]"]
+            if sec.heading:
+                prefix_parts.append(f"[Section: {sec.heading}]")
+            prefix   = " ".join(prefix_parts)
+            content  = f"{prefix}\n{raw_text}"
 
-            # Build chunk metadata by extending the page metadata.
-            # CONCEPT: We copy page_meta so every chunk knows which
-            # file and page it came from. Then we add chunk-specific
-            # fields on top. This means the LLM context window will
-            # always know the provenance of every retrieved chunk.
-            chunk_metadata = {
-                **page_meta,           # inherit all page-level metadata
-                "chunk_index":    chunk_index,     # position in whole document
-                "chunk_on_page":  chunk_on_page,   # position on this page
-                "char_start":     char_start,       # character offset in page
-                "char_end":       char_end,         # character offset in page
-                "char_count":     len(cleaned_text),
-            }
-
+            # ── Page span ─────────────────────────────────────────
+            # Approximate: the section starts on sec.page_number.
+            # Cross-page spans are resolved at the window level by the
+            # ingestion handler which tracks actual page boundaries.
             all_chunks.append({
-                "content":  cleaned_text,
-                "metadata": chunk_metadata,
+                "content": content,
+                "metadata": {
+                    "page_number":     sec.page_number,
+                    "page_number_end": sec.page_number,
+                    "pages":           [sec.page_number],
+                    "heading":         sec.heading,
+                    "section_id":      sec.section_id,
+                    "content_type":    sec.content_type,
+                    "chunk_index":     chunk_index,
+                    "char_count":      len(content),
+                },
             })
-
             chunk_index += 1
 
-        print(f"[Chunker] Page {page_number:3d}: "
-              f"{len(raw_chunks)} chunks produced")
+            # Update last_sentence for next section's bridge check
+            sentences = _SENTENCE_END.split(raw_text)
+            last_sentence = sentences[-1].strip() if sentences else None
 
-    # ── Summary ───────────────────────────────────────────────────
     if not all_chunks:
-        raise ValueError(
-            "Chunking produced zero chunks. "
-            "The extracted text may be empty or too short."
-        )
+        raise ValueError("Chunking produced zero chunks.")
 
-    total_chars = sum(c["metadata"]["char_count"] for c in all_chunks)
-    avg_chars   = total_chars // len(all_chunks)
-
-    print(f"[Chunker] Complete: {len(all_chunks)} chunks total, "
-          f"avg {avg_chars} chars/chunk, "
-          f"chunk_size={chunk_size}, overlap={chunk_overlap}")
-
+    cross_section = 0  # future: count cross-section bridges
+    print(
+        f"[Chunker] {len(all_chunks)} chunks, "
+        f"chunk_size={chunk_size}, overlap={chunk_overlap}, "
+        f"sections={len(sections)}"
+    )
     return all_chunks

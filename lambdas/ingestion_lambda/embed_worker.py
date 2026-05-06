@@ -12,12 +12,16 @@
 #
 # SQS message shape:
 # {
-#     "document_id":   "uuid",
-#     "user_id":       "uuid",
-#     "chunk_ids":     ["uuid", "uuid", ...],  # 32 IDs per batch
-#     "batch_num":     1,
-#     "total_batches": 19,
-#     "is_last_batch": false
+#     "message_type": "embed",
+#     "document_id":  "uuid",
+#     "chunk_ids":    ["uuid", "uuid", ...],  # 32 IDs per batch
+#     "batch_num":    1
+# }
+# or
+# {
+#     "message_type": "finalize",
+#     "document_id":  "uuid",
+#     "user_id":      "uuid"
 # }
 
 import json
@@ -35,15 +39,18 @@ def handler(event, context):
 
 def _process_record(record: dict) -> None:
 
-    body          = json.loads(record["body"])
-    chunk_ids     = body["chunk_ids"]
-    document_id   = body["document_id"]
-    user_id       = body["user_id"]
-    batch_num     = body["batch_num"]
-    total_batches = body["total_batches"]
-    is_last_batch = body["is_last_batch"]
+    body = json.loads(record["body"])
+    message_type = body.get("message_type", "embed")
+    document_id  = body["document_id"]
 
-    print(f"[EmbedWorker] Batch {batch_num}/{total_batches} — "
+    if message_type == "finalize":
+        _finalize_document(document_id)
+        return
+
+    chunk_ids = body["chunk_ids"]
+    batch_num = body.get("batch_num", 0)
+
+    print(f"[EmbedWorker] Batch {batch_num} — "
           f"{len(chunk_ids)} chunks for document {document_id}")
 
     try:
@@ -83,22 +90,8 @@ def _process_record(record: dict) -> None:
                 .eq("id", chunk_id) \
                 .execute()
 
-        print(f"[EmbedWorker] ✅ Batch {batch_num}/{total_batches} done "
+        print(f"[EmbedWorker] ✅ Batch {batch_num} done "
               f"— {len(embeddings)} embeddings written")
-
-        # ── Step 4: Mark document ready on last batch ──────────────
-        # CONCEPT: Only the last batch marks the document ready.
-        # Earlier batches finishing out of order is fine — only when
-        # ALL batches are done do we flip the status to ready.
-        # is_last_batch is set by the indexer based on batch_num == total_batches.
-        if is_last_batch:
-            supabase.schema("rag").table("documents") \
-                .update({"status": "ready"}) \
-                .eq("id", document_id) \
-                .execute()
-
-            print(f"[EmbedWorker] ✅ Document {document_id} → ready "
-                  f"(all {total_batches} batches complete)")
 
     except Exception as e:
         print(f"[EmbedWorker] ❌ Batch {batch_num} failed: {e}")
@@ -106,3 +99,21 @@ def _process_record(record: dict) -> None:
         # Failed embedding doesn't fail the whole document —
         # only this batch gets retried
         raise
+
+
+def _finalize_document(document_id: str) -> None:
+    count_result = (
+        supabase.schema("rag").table("chunks")
+        .select("id", count="exact")
+        .eq("document_id", document_id)
+        .execute()
+    )
+    chunk_count = count_result.count or 0
+
+    supabase.schema("rag").table("documents") \
+        .update({"status": "ready", "chunk_count": chunk_count}) \
+        .eq("id", document_id) \
+        .execute()
+
+    print(f"[EmbedWorker] ✅ Document {document_id} → ready "
+          f"(chunks={chunk_count})")

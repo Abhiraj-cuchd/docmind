@@ -18,6 +18,7 @@ class ApiStack(cdk.Stack):
         construct_id:    str,
         submit_function: lambda_.Function,
         poll_function:   lambda_.Function,
+        delete_function: lambda_.Function,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -44,6 +45,7 @@ class ApiStack(cdk.Stack):
                 allow_methods=[
                     apigw.CorsHttpMethod.GET,
                     apigw.CorsHttpMethod.POST,
+                    apigw.CorsHttpMethod.DELETE,
                     apigw.CorsHttpMethod.OPTIONS,
                 ],
                 allow_headers=[
@@ -64,6 +66,12 @@ class ApiStack(cdk.Stack):
         poll_integration = integrations.HttpLambdaIntegration(
             "PollIntegration",
             poll_function,
+            payload_format_version=apigw.PayloadFormatVersion.VERSION_2_0,
+        )
+
+        delete_integration = integrations.HttpLambdaIntegration(
+            "DeleteIntegration",
+            delete_function,
             payload_format_version=apigw.PayloadFormatVersion.VERSION_2_0,
         )
 
@@ -92,6 +100,12 @@ class ApiStack(cdk.Stack):
             integration=submit_integration,
         )
 
+        self.api.add_routes(
+            path="/documents/{documentId}",
+            methods=[apigw.HttpMethod.DELETE],
+            integration=delete_integration,
+        )
+
         # ── Throttling via L1 CfnStage ────────────────────────────
         # CONCEPT: HttpApi (L2) doesn't expose throttling directly.
         # We reach down to the underlying CloudFormation resource
@@ -110,3 +124,4 @@ class ApiStack(cdk.Stack):
             value=self.api.api_endpoint,
             description="API Gateway endpoint — use this in your frontend",
         )
+

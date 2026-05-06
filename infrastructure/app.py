@@ -55,6 +55,7 @@ api = ApiStack(
     description="RAG MVP — API Gateway routes and CORS",
     submit_function=compute.submit_function,
     poll_function=compute.poll_function,
+    delete_function=compute.delete_function,
 )
 
 app.synth()

@@ -33,6 +33,11 @@ const STATUS_CONFIG: Record<StatusType, {
     icon: Warning,
     className: 'bg-red-500/15 text-red-400 border-red-500/20',
   },
+  partial: {
+    label: 'Partial',
+    icon: Warning,
+    className: 'bg-orange-500/15 text-orange-400 border-orange-500/20',
+  },
 };
 
 export function DocumentStatusBadge({ status }: DocumentStatusProps) {

@@ -25,6 +25,7 @@
 
 import json
 import os
+import re
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from shared_lambda.supabase_client import get_service_client, execute_hybrid_search
@@ -233,11 +234,75 @@ def _process_record(record: dict) -> None:
             print(f"[Handler] User has documents — skipping router, "
                   f"always retrieving")
 
-        # ── Step 5: Embed query (free — Amazon Titan) ──────────────
-        print(f"[Handler] Embedding query (Titan — free)")
+        # ── Step 5: Structured query detection ─────────────────────
+        # "What is on page 4?" and "explain the binary search section"
+        # are metadata lookups, not semantic queries. Bypassing hybrid
+        # search gives exact results with zero token cost for retrieval.
+        structured = _detect_structured_query(search_query)
+
+        if structured is not None:
+            q_type, q_value = structured["type"], structured["value"]
+            print(f"[Handler] Structured query: type={q_type} value={q_value!r}")
+
+            if q_type == "page":
+                candidates = _get_chunks_by_page(user_id, q_value, document_id)
+                not_found_msg = (
+                    f"Page {q_value} does not appear to have any extractable "
+                    f"text content in your document. It may be an image-only "
+                    f"page, or the document has fewer than {q_value} pages."
+                )
+            else:  # section
+                candidates = _get_chunks_by_section(user_id, q_value, document_id)
+                not_found_msg = (
+                    f"No section matching '{q_value}' was found in your document."
+                )
+
+            if not candidates:
+                generate_acquired = acquire_generate_tokens(r)
+                if not generate_acquired:
+                    raise Exception("RATE_LIMIT_WAIT")
+                tokens_used += 2
+                _finish(
+                    r=r, job_id=job_id, query=query, answer=not_found_msg,
+                    user_id=user_id, conversation_id=conversation_id,
+                    voice_mode=voice_mode, retrieved_chunks=[],
+                    cache_key=cache_key, tokens_used=tokens_used, path="rag",
+                )
+                return
+
+            print(f"[Handler] {len(candidates)} chunks via metadata lookup")
+
+            top_chunks = mmr_rerank(
+                query_embedding=embed_query(search_query),
+                chunks=candidates,
+                top_k=MMR_TOP_K,
+                lambda_mult=MMR_LAMBDA,
+            )
+
+            generate_acquired = acquire_generate_tokens(r)
+            if not generate_acquired:
+                raise Exception("RATE_LIMIT_WAIT")
+            tokens_used += 2
+
+            answer = generate_answer(
+                query=query,
+                context_chunks=top_chunks,
+                history=history,
+                style=response_style,
+            )
+            _finish(
+                r=r, job_id=job_id, query=query, answer=answer,
+                user_id=user_id, conversation_id=conversation_id,
+                voice_mode=voice_mode, retrieved_chunks=top_chunks,
+                cache_key=cache_key, tokens_used=tokens_used, path="rag",
+            )
+            return
+
+        # ── Step 6: Embed query (free — Voyage AI) ─────────────────
+        print(f"[Handler] Embedding query (Voyage — free)")
         direct_embedding = embed_query(search_query)
 
-        # ── Step 6: Hybrid search (free — Supabase HNSW + BM25) ───
+        # ── Step 7: Hybrid search (free — Supabase HNSW + BM25) ───
         print(f"[Handler] Running hybrid search (Supabase — free)")
         candidates = execute_hybrid_search(
             user_id=user_id,
@@ -249,7 +314,7 @@ def _process_record(record: dict) -> None:
 
         print(f"[Handler] Hybrid search: {len(candidates)} candidates")
 
-        # ── Step 7: No candidates at all ───────────────────────────
+        # ── Step 8: No candidates at all ───────────────────────────
         if not candidates:
             print(f"[Handler] No candidates — direct fallback")
 
@@ -609,6 +674,78 @@ def _get_voice_credits(user_id: str) -> int:
         return result.data.get("voice_credits", 0) if result.data else 0
     except Exception:
         return 0
+
+
+_PAGE_RE = re.compile(
+    r'\b(?:page|pg)\.?\s*(?:number\s*|#\s*)?(\d+)\b',
+    re.IGNORECASE,
+)
+
+_SECTION_RE = re.compile(
+    r'\b(?:section|chapter|part|unit|module|topic)\s+(["\']?[\w\s\-\.]{2,60}["\']?)',
+    re.IGNORECASE,
+)
+
+
+def _detect_structured_query(query: str) -> dict | None:
+    """
+    Returns {"type": "page", "value": int} or {"type": "section", "value": str}
+    if the query is a structural lookup, otherwise None.
+
+    Page takes priority over section (a query can't be both).
+
+    Examples matched:
+      "what is on page 4"          → {type: page, value: 4}
+      "explain page 12"            → {type: page, value: 12}
+      "what is in section 3"       → {type: section, value: "3"}
+      "summarise the binary search section" → None (too vague — fall through to hybrid)
+      "what does chapter 2 say"    → {type: section, value: "2"}
+    """
+    page_m = _PAGE_RE.search(query)
+    if page_m:
+        return {"type": "page", "value": int(page_m.group(1))}
+
+    section_m = _SECTION_RE.search(query)
+    if section_m:
+        raw = section_m.group(1).strip().strip("'\"")
+        if raw:
+            return {"type": "section", "value": raw}
+
+    return None
+
+
+def _get_chunks_by_page(
+    user_id:     str,
+    page_number: int,
+    document_id: str | None,
+) -> list[dict]:
+    result = supabase.schema("rag").rpc(
+        "get_chunks_by_page",
+        {
+            "target_user_id": user_id,
+            "target_page":    page_number,
+            "match_count":    20,
+            "target_doc_id":  document_id,
+        }
+    ).execute()
+    return result.data or []
+
+
+def _get_chunks_by_section(
+    user_id:         str,
+    heading_pattern: str,
+    document_id:     str | None,
+) -> list[dict]:
+    result = supabase.schema("rag").rpc(
+        "get_chunks_by_section",
+        {
+            "target_user_id":  user_id,
+            "heading_pattern": heading_pattern,
+            "target_doc_id":   document_id,
+            "match_count":     20,
+        }
+    ).execute()
+    return result.data or []
 
 
 def _split_tts_chunks(text: str, max_chars: int) -> list[str]:

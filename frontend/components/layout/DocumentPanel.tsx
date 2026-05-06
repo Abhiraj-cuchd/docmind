@@ -25,7 +25,7 @@ import { toast } from 'sonner'
 interface Document {
   id: string
   filename: string
-  status: 'processing' | 'indexing' | 'ready' | 'failed'
+  status: 'processing' | 'indexing' | 'ready' | 'failed' | 'partial'
   chunk_count: number | null
   created_at: string
   skipped_pages: { page_number: number; reason: string }[]
@@ -69,6 +69,7 @@ function StatusBadge({ status }: { status: Document['status'] }) {
     indexing:   { label: 'Indexing',   icon: Loader2,      cls: 'bg-blue-500/20 text-blue-400 border-blue-500/30',       spin: true  },
     ready:      { label: 'Ready',      icon: CheckCircle,  cls: 'bg-green-500/20 text-green-400 border-green-500/30',    spin: false },
     failed:     { label: 'Failed',     icon: AlertCircle,  cls: 'bg-red-500/20 text-red-400 border-red-500/30',          spin: false },
+    partial:    { label: 'Partial',    icon: AlertCircle,  cls: 'bg-orange-500/20 text-orange-400 border-orange-500/30', spin: false },
   }
 
   const { label, icon: Icon, cls, spin } = config[status]
@@ -96,7 +97,7 @@ function DocumentCard({ document, isActive, onSelect, onDelete }: DocumentCardPr
   const totalPages   = document.doc_metadata?.total_pages
   const fileSize     = document.doc_metadata?.file_size_bytes
   const skippedCount = document.skipped_pages?.length ?? 0
-  const isReady      = document.status === 'ready'
+  const isReady      = document.status === 'ready' || document.status === 'partial'
   const isProcessing = ['processing', 'indexing'].includes(document.status)
 
   const [confirming, setConfirming] = useState(false)

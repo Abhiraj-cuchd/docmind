@@ -32,7 +32,7 @@ export interface Message {
   created_at: string;
 }
 
-export type DocumentStatus = 'processing' | 'indexing' | 'ready' | 'failed';
+export type DocumentStatus = 'processing' | 'indexing' | 'ready' | 'failed' | 'partial';
 
 export interface Document {
   id: string;

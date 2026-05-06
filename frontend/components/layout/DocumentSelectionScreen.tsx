@@ -29,11 +29,13 @@ const STATUS_CONFIG: Record<StatusKey, { label: string; color: string; bg: strin
   processing: { label: 'Processing', color: 'text-amber-400',   bg: 'bg-amber-500/10 border-amber-500/20',     iconClass: 'animate-spin' },
   indexing:   { label: 'Indexing',   color: 'text-blue-400',    bg: 'bg-blue-500/10 border-blue-500/20',       iconClass: 'animate-spin' },
   failed:     { label: 'Failed',     color: 'text-red-400',     bg: 'bg-red-500/10 border-red-500/20',         iconClass: '' },
+  partial:    { label: 'Partial',    color: 'text-orange-400',  bg: 'bg-orange-500/10 border-orange-500/20',   iconClass: '' },
 }
 
 function StatusIcon({ status }: { status: StatusKey }) {
   switch (status) {
-    case 'ready':      return <CheckCircle className="w-3 h-3" />
+    case 'ready':
+    case 'partial':    return <CheckCircle className="w-3 h-3" />
     case 'processing':
     case 'indexing':   return <Loader2 className="w-3 h-3" />
     case 'failed':     return <AlertCircle className="w-3 h-3" />
@@ -49,7 +51,7 @@ function DocumentGridCard({
   onClick: () => void
   index: number
 }) {
-  const isReady = doc.status === 'ready'
+  const isReady = doc.status === 'ready' || doc.status === 'partial'
   const { label, color, iconClass } = STATUS_CONFIG[doc.status]
 
   return (

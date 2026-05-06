@@ -251,7 +251,39 @@ class ComputeStack(cdk.Stack):
             )
         )
 
-        # ── Lambda 5 — Poll ────────────────────────────────────────
+        # ── Lambda 5 — Delete Document ─────────────────────────────
+        self.delete_function = lambda_.Function(
+            self,
+            "DeleteFunction",
+            function_name="rag-delete",
+            runtime=lambda_.Runtime.PYTHON_3_11,
+            handler="handler.handler",
+            code=lambda_.Code.from_asset(
+                "../lambdas/delete_lambda",
+                bundling=cdk.BundlingOptions(
+                    image=lambda_.Runtime.PYTHON_3_11.bundling_image,
+                    command=["bash", "-c", "cp -r . /asset-output/"],
+                ),
+            ),
+            layers=common_layers,
+            timeout=cdk.Duration.seconds(15),
+            memory_size=128,
+            environment={
+                **common_env,
+                "PDF_BUCKET_NAME": pdf_bucket.bucket_name,
+            },
+        )
+
+        self.delete_function.add_to_role_policy(secrets_policy)
+        self.delete_function.add_to_role_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=["s3:DeleteObject"],
+                resources=[f"{pdf_bucket.bucket_arn}/uploads/*"],
+            )
+        )
+
+        # ── Lambda 6 — Poll ────────────────────────────────────────
         self.poll_function = lambda_.Function(
             self,
             "PollFunction",
@@ -287,5 +319,7 @@ class ComputeStack(cdk.Stack):
                       value=self.submit_function.function_arn)
         cdk.CfnOutput(self, "ProcessorFunctionArn",
                       value=self.processor_function.function_arn)
+        cdk.CfnOutput(self, "DeleteFunctionArn",
+                      value=self.delete_function.function_arn)
         cdk.CfnOutput(self, "PollFunctionArn",
                       value=self.poll_function.function_arn)
