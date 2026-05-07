@@ -10,7 +10,7 @@ interface UseConversationsReturn {
   conversations: Conversation[];
   loading: boolean;
   error: string | null;
-  createConversation: (title?: string, documentId?: string) => Promise<Conversation | null>;
+  createConversation: (title?: string, documentIds?: string[]) => Promise<Conversation | null>;
   deleteConversation: (id: string) => Promise<boolean>;
   refresh: () => void;
 }
@@ -38,7 +38,7 @@ export function useConversations(): UseConversationsReturn {
     fetchConversations();
   }, [fetchConversations]);
 
-  const createConversation = useCallback(async (title = 'New Conversation', documentId?: string): Promise<Conversation | null> => {
+  const createConversation = useCallback(async (title = 'New Conversation', documentIds?: string[]): Promise<Conversation | null> => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return null;
@@ -49,8 +49,8 @@ export function useConversations(): UseConversationsReturn {
         title,
       };
 
-      if (documentId) {
-        newConv.document_id = documentId;
+      if (documentIds && documentIds.length > 0) {
+        newConv.document_id = documentIds[0];
       }
 
       const result = await supabaseFetch<Conversation[]>('conversations', {
@@ -62,6 +62,17 @@ export function useConversations(): UseConversationsReturn {
       });
 
       const created = Array.isArray(result) ? result[0] : result;
+
+      if (documentIds && documentIds.length > 0) {
+        await supabase
+          .schema('rag')
+          .from('conversation_documents')
+          .insert(documentIds.map(docId => ({
+            conversation_id: created.id,
+            document_id: docId,
+          })));
+      }
+
       setConversations(prev => [created, ...prev]);
       return created;
     } catch (err) {

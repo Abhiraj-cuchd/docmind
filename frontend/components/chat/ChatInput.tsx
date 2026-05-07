@@ -3,7 +3,7 @@
 import { useRef, useState, useEffect } from 'react';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
-import { PaperPlaneTilt, Stop } from '@phosphor-icons/react';
+import { PaperPlaneTilt, Stop, Paperclip } from '@phosphor-icons/react';
 import { cn } from '@/lib/utils';
 
 interface ChatInputProps {
@@ -37,7 +37,6 @@ export function ChatInput({
     if (!trimmed || disabled || isLoading) return;
     onSubmit(trimmed);
     setValue('');
-    // Reset height
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
@@ -51,8 +50,15 @@ export function ChatInput({
   };
 
   return (
-    <div className="p-4 border-t border-border/50">
-      <div className="relative flex items-end gap-2 bg-card border border-border rounded-2xl p-2 focus-within:border-primary/40 focus-within:ring-1 focus-within:ring-primary/20 transition-all">
+    <div className="border-t border-white/8 bg-[#060b14] px-6 pb-5 pt-4">
+      <div className="mx-auto flex w-full max-w-[860px] items-end gap-2 rounded-2xl border border-white/8 bg-[#0d1626] p-2 shadow-[0_12px_36px_rgba(0,0,0,0.22)] transition-colors focus-within:border-blue-400/45">
+        <button
+          type="button"
+          className="mb-1 ml-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white/55 transition-colors hover:bg-white/[0.05] hover:text-white"
+          title="Attach file"
+        >
+          <Paperclip className="size-5" />
+        </button>
         <Textarea
           ref={textareaRef}
           id="chat-input"
@@ -62,7 +68,7 @@ export function ChatInput({
           placeholder={placeholder}
           disabled={disabled}
           rows={1}
-          className="flex-1 resize-none border-0 bg-transparent p-2 text-sm focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-muted-foreground/50 min-h-[40px] max-h-[200px]"
+          className="min-h-[42px] max-h-[200px] flex-1 resize-none border-0 bg-transparent px-2 py-3 text-sm text-white shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-white/35 disabled:cursor-not-allowed"
         />
 
         {isLoading ? (
@@ -70,7 +76,7 @@ export function ChatInput({
             type="button"
             onClick={onAbort}
             size="icon"
-            className="shrink-0 rounded-xl bg-destructive/20 hover:bg-destructive/30 text-destructive border-0 mb-1"
+            className="mb-1 h-10 w-10 shrink-0 rounded-xl border-0 bg-red-500/20 text-red-300 hover:bg-red-500/30"
             title="Stop generating"
           >
             <Stop className="size-4" weight="fill" />
@@ -82,10 +88,10 @@ export function ChatInput({
             disabled={!value.trim() || disabled}
             size="icon"
             className={cn(
-              'shrink-0 rounded-xl mb-1 border-0 transition-all duration-200',
+              'mb-1 h-10 w-10 shrink-0 rounded-xl border-0 transition-colors',
               value.trim()
-                ? 'bg-primary hover:bg-primary/90 text-primary-foreground hover:shadow-lg hover:shadow-primary/20'
-                : 'bg-muted text-muted-foreground'
+                ? 'bg-[#174fbf] text-white hover:bg-[#1f62e2]'
+                : 'bg-[#142033] text-white/35'
             )}
             title="Send message (Enter)"
           >
@@ -93,8 +99,8 @@ export function ChatInput({
           </Button>
         )}
       </div>
-      <p className="text-center text-[10px] text-muted-foreground/40 mt-2">
-        Shift+Enter for new line · Enter to send
+      <p className="mt-2 text-center text-[11px] text-white/30">
+        Shift + Enter for new line • Enter to send
       </p>
     </div>
   );

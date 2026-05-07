@@ -6,7 +6,8 @@ import { Conversation } from '@/lib/types';
 
 interface ConversationSelectionState {
   conversationId: string | null;
-  documentId: string | null;
+  documentId: string | null;       // keep for backwards compat (first doc)
+  documentIds?: string[];          // all selected doc IDs
 }
 
 interface ConversationSelectionContextValue {
@@ -16,7 +17,7 @@ interface ConversationSelectionContextValue {
   clearSelection: () => void;
   conversations: Conversation[];
   conversationsLoading: boolean;
-  createConversation: (title?: string, documentId?: string) => Promise<Conversation | null>;
+  createConversation: (title?: string, documentIds?: string[]) => Promise<Conversation | null>;
   deleteConversation: (id: string) => Promise<boolean>;
 }
 
@@ -26,6 +27,7 @@ export function ConversationSelectionProvider({ children }: { children: React.Re
   const [selection, setSelectionState] = useState<ConversationSelectionState>({
     conversationId: null,
     documentId: null,
+    documentIds: [],
   });
 
   const { conversations, loading: conversationsLoading, createConversation, deleteConversation } = useConversations();
@@ -39,7 +41,7 @@ export function ConversationSelectionProvider({ children }: { children: React.Re
   }, []);
 
   const clearSelection = useCallback(() => {
-    setSelectionState({ conversationId: null, documentId: null });
+    setSelectionState({ conversationId: null, documentId: null, documentIds: [] });
   }, []);
 
   const value = useMemo(

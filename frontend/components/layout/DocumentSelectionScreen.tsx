@@ -6,7 +6,7 @@ import { useMemo, useState } from 'react'
 import { Document } from '@/lib/types'
 import {
   FileText, Upload, CheckCircle, AlertCircle,
-  Loader2, Hash, ArrowRight, RefreshCw, User, ChevronDown, Trash2
+  Loader2, Hash, ArrowRight, RefreshCw, User, ChevronDown, Trash2, Check
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -21,7 +21,7 @@ import Link from 'next/link'
 import { cn } from '@/lib/utils'
 
 interface Props {
-  onSelect: (documentId: string, filename: string) => void
+  onSelect: (documentIds: string[]) => void
 }
 
 function formatDate(dateStr: string): string {
@@ -52,12 +52,14 @@ function StatusIcon({ status }: { status: StatusKey }) {
 
 function DocumentGridCard({
   doc,
-  onClick,
+  isSelected,
+  onToggle,
   onDeleteRequest,
   index,
 }: {
   doc: Document
-  onClick: () => void
+  isSelected: boolean
+  onToggle: () => void
   onDeleteRequest: (doc: Document) => void
   index: number
 }) {
@@ -67,76 +69,78 @@ function DocumentGridCard({
   return (
     <div
       style={{ animationDelay: `${index * 55}ms` }}
+      onClick={isReady ? onToggle : undefined}
       className={cn(
         'group relative flex flex-col gap-3 p-5 rounded-2xl border text-left w-full',
         'animate-in fade-in-0 slide-in-from-bottom-3 duration-300 fill-mode-both',
         isReady
           ? [
-              'border-border bg-card',
-              'hover:border-primary/50 hover:bg-primary/[0.04]',
+              isSelected
+                ? 'border-primary/70 bg-primary/[0.06] ring-1 ring-primary/30'
+                : 'border-border bg-card hover:border-primary/50 hover:bg-primary/[0.04]',
               'hover:-translate-y-1 hover:shadow-xl hover:shadow-primary/10',
-              'transition-all duration-200',
+              'transition-all duration-200 cursor-pointer',
             ]
-          : 'border-border/40 bg-card/40 opacity-55'
+          : 'border-border/40 bg-card/40 opacity-55 cursor-not-allowed'
       )}
     >
-      {/* Clickable area */}
-      <button
-        onClick={isReady ? onClick : undefined}
-        disabled={!isReady}
-        className={cn('flex flex-col gap-3 text-left w-full', isReady ? 'cursor-pointer' : 'cursor-not-allowed')}
-      >
-        {/* Icon row — file icon left, actions right */}
-        <div className="flex items-start justify-between">
-          <div className="w-11 h-11 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center shrink-0">
-            <FileText className="w-5 h-5 text-red-400" />
-          </div>
+      {/* Selected checkmark badge */}
+      {isSelected && (
+        <div className="absolute top-2.5 right-2.5 w-5 h-5 rounded-full bg-primary flex items-center justify-center z-10">
+          <Check className="w-3 h-3 text-primary-foreground" />
+        </div>
+      )}
 
-          {/* Action buttons — adjacent, visible on hover */}
-          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-            <button
-              onClick={e => { e.stopPropagation(); onDeleteRequest(doc) }}
-              className="p-1.5 rounded-lg text-muted-foreground/60 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-              title="Delete document"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
-            {isReady && (
-              <div className="p-1.5 text-primary">
-                <ArrowRight className="w-3.5 h-3.5" />
-              </div>
-            )}
-          </div>
+      {/* Icon row — file icon left, actions right */}
+      <div className="flex items-start justify-between">
+        <div className="w-11 h-11 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center shrink-0">
+          <FileText className="w-5 h-5 text-red-400" />
         </div>
 
-        {/* Filename + date */}
-        <div className="flex-1 min-w-0 space-y-0.5">
-          <p
-            className="text-sm font-semibold text-foreground leading-snug line-clamp-2"
-            title={doc.filename}
+        {/* Action buttons — adjacent, visible on hover */}
+        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+          <button
+            onClick={e => { e.stopPropagation(); onDeleteRequest(doc) }}
+            className="p-1.5 rounded-lg text-muted-foreground/60 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+            title="Delete document"
           >
-            {doc.filename}
-          </p>
-          <p className="text-xs text-muted-foreground">{formatDate(doc.created_at)}</p>
-        </div>
-
-        {/* Footer: status + chunk count */}
-        <div className="flex items-center justify-between gap-2 pt-1 border-t border-border/50">
-          <span className={cn('flex items-center gap-1.5 text-xs font-medium', color)}>
-            <span className={iconClass}>
-              <StatusIcon status={doc.status} />
-            </span>
-            {label}
-          </span>
-
-          {doc.chunk_count !== undefined && isReady && (
-            <span className="flex items-center gap-1 text-xs text-muted-foreground">
-              <Hash className="w-3 h-3" />
-              {doc.chunk_count.toLocaleString()} chunks
-            </span>
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+          {isReady && !isSelected && (
+            <div className="p-1.5 text-primary">
+              <ArrowRight className="w-3.5 h-3.5" />
+            </div>
           )}
         </div>
-      </button>
+      </div>
+
+      {/* Filename + date */}
+      <div className="flex-1 min-w-0 space-y-0.5">
+        <p
+          className="text-sm font-semibold text-foreground leading-snug line-clamp-2"
+          title={doc.filename}
+        >
+          {doc.filename}
+        </p>
+        <p className="text-xs text-muted-foreground">{formatDate(doc.created_at)}</p>
+      </div>
+
+      {/* Footer: status + chunk count */}
+      <div className="flex items-center justify-between gap-2 pt-1 border-t border-border/50">
+        <span className={cn('flex items-center gap-1.5 text-xs font-medium', color)}>
+          <span className={iconClass}>
+            <StatusIcon status={doc.status} />
+          </span>
+          {label}
+        </span>
+
+        {doc.chunk_count !== undefined && isReady && (
+          <span className="flex items-center gap-1 text-xs text-muted-foreground">
+            <Hash className="w-3 h-3" />
+            {doc.chunk_count.toLocaleString()} chunks
+          </span>
+        )}
+      </div>
     </div>
   )
 }
@@ -166,6 +170,7 @@ export function DocumentSelectionScreen({ onSelect }: Props) {
   const [agentValue, setAgentValue] = useState('rag')
   const [deleteTarget, setDeleteTarget] = useState<Document | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
 
   const handleConfirmDelete = async () => {
     if (!deleteTarget) return
@@ -274,7 +279,25 @@ export function DocumentSelectionScreen({ onSelect }: Props) {
       </header>
 
       {/* ── Main ───────────────────────────────────────────────────── */}
-      <main className="flex-1 w-full px-6 py-12">
+      <main className="flex-1 w-full px-6 py-8">
+        {selectedIds.length > 0 && (
+          <div className="sticky top-16 z-20 mb-8 rounded-2xl border border-border bg-background/95 backdrop-blur-md px-4 py-3 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span className="text-sm text-muted-foreground">
+                {selectedIds.length} document{selectedIds.length > 1 ? 's' : ''} selected
+              </span>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" onClick={() => setSelectedIds([])}>
+                  Clear
+                </Button>
+                <Button size="sm" className="gap-2" onClick={() => onSelect(selectedIds)}>
+                  <ArrowRight className="w-4 h-4" />
+                  Start Chat
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Page heading */}
         <div
@@ -289,9 +312,11 @@ export function DocumentSelectionScreen({ onSelect }: Props) {
               ? 'Loading your library…'
               : documents.length === 0
                 ? 'Upload a PDF to get started'
-                : readyCount > 0
-                  ? `${readyCount} document${readyCount !== 1 ? 's' : ''} ready — select one to start chatting`
-                  : 'Your documents are still processing'}
+                : selectedIds.length > 0
+                  ? `${selectedIds.length} selected — click Start Chat to continue`
+                  : readyCount > 0
+                    ? `${readyCount} document${readyCount !== 1 ? 's' : ''} ready — select one to start chatting`
+                    : 'Your documents are still processing'}
           </p>
         </div>
 
@@ -335,7 +360,10 @@ export function DocumentSelectionScreen({ onSelect }: Props) {
                 key={doc.id}
                 doc={doc}
                 index={i}
-                onClick={() => onSelect(doc.id, doc.filename)}
+                isSelected={selectedIds.includes(doc.id)}
+                onToggle={() => setSelectedIds(prev =>
+                  prev.includes(doc.id) ? prev.filter(id => id !== doc.id) : [...prev, doc.id]
+                )}
                 onDeleteRequest={setDeleteTarget}
               />
             ))}

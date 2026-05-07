@@ -47,7 +47,7 @@ class ChatErrorBoundary extends Component<
 }
 
 import { useEffect, useRef, useState } from 'react';
-import { Message, ResponseStyle, Source } from '@/lib/types';
+import { ChunkEvidence, Message, ResponseStyle, Source } from '@/lib/types';
 import { useMessages } from '@/hooks/useMessages';
 import { useRAGQuery } from '@/hooks/useRAGQuery';
 import { useAudioPlayer } from '@/hooks/useAudioPlayer';
@@ -59,22 +59,30 @@ import { VoiceToggle } from '@/components/chat/VoiceToggle';
 
 import { toast } from 'sonner';
 import { v4 as uuidv4 } from 'uuid';
-import { ArrowLeft, ChatCircleDots, TextAlignLeft, BookOpen, ChatTeardrop } from '@phosphor-icons/react';
+import { ArrowLeft, TextAlignLeft, BookOpen, ChatTeardrop } from '@phosphor-icons/react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+
+interface ReferencedDoc {
+  id: string;
+  filename: string;
+}
 
 interface ChatWindowProps {
   conversationId: string | null;
   documentId?: string | null;
-  createConversation?: (title: string, documentId?: string) => Promise<import('@/lib/types').Conversation | null>;
+  documentIds?: string[];
+  referencedDocs?: ReferencedDoc[];
+  createConversation?: (title: string, documentIds?: string[]) => Promise<import('@/lib/types').Conversation | null>;
   onConversationCreated?: (id: string) => void;
   onBack?: () => void;
   onSourceClick?: (source: Source) => void;
+  onEvidenceClick?: (evidence: ChunkEvidence) => void;
 }
 
 const STYLES = [
   { value: 'concise',        label: 'Concise',        icon: TextAlignLeft,  tip: 'Short, direct answers'          },
-  { value: 'explanatory',    label: 'Explain',         icon: BookOpen,       tip: 'Structured breakdown'           },
+  { value: 'explanatory',    label: 'Explanatory',    icon: BookOpen,       tip: 'Structured breakdown'           },
   { value: 'conversational', label: 'Casual',          icon: ChatTeardrop,   tip: 'Friendly, conversational tone'  },
 ] as const;
 
@@ -87,7 +95,7 @@ function StyleSwitcher({
 }) {
   return (
     <TooltipProvider delayDuration={400}>
-      <div className="flex items-center gap-0.5 rounded-lg bg-muted/40 border border-border/50 p-0.5">
+      <div className="flex h-10 items-center gap-1 rounded-xl border border-white/8 bg-[#07101d] p-1">
         {STYLES.map(({ value: v, label, icon: Icon, tip }) => {
           const active = value === v;
           return (
@@ -96,13 +104,13 @@ function StyleSwitcher({
                 <button
                   onClick={() => onChange(v)}
                   className={cn(
-                    'flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium transition-all duration-150',
+                    'flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors',
                     active
-                      ? 'bg-background text-foreground shadow-sm border border-border/60'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-muted/60',
+                      ? 'bg-[#174fbf] text-white shadow-[0_8px_18px_rgba(23,79,191,0.24)]'
+                      : 'text-white/65 hover:bg-white/[0.04] hover:text-white',
                   )}
                 >
-                  <Icon className="size-3" weight={active ? 'fill' : 'regular'} />
+                  <Icon className="size-3.5" weight={active ? 'fill' : 'regular'} />
                   <span>{label}</span>
                 </button>
               </TooltipTrigger>
@@ -118,10 +126,12 @@ function StyleSwitcher({
 function ChatWindowInner({
   conversationId,
   documentId,
+  documentIds,
   createConversation,
   onConversationCreated,
   onBack,
   onSourceClick,
+  onEvidenceClick,
 }: ChatWindowProps) {
   const { messages, loading, addMessage } = useMessages(conversationId);
   const { submit, isLoading, isPolling, abort } = useRAGQuery();
@@ -164,7 +174,8 @@ function ChatWindowInner({
 
       const raw = question.trim();
       const title = raw.length > 40 ? `${raw.slice(0, 40).trimEnd()}…` : (raw || 'New Conversation');
-      const conv = await createConversation(title, documentId);
+      const resolvedDocIds = documentIds ?? (documentId ? [documentId] : []);
+      const conv = await createConversation(title, resolvedDocIds);
       if (!conv) {
         toast.error('Failed to create conversation');
         return;
@@ -190,6 +201,7 @@ function ChatWindowInner({
         conversation_id: convId,
         voice_mode: voiceMode,
         response_style: responseStyle,
+        document_ids: documentIds ?? (documentId ? [documentId] : []),
       });
       if (!result) return;
 
@@ -230,35 +242,27 @@ function ChatWindowInner({
   };
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div
-        className={`px-4 py-3 border-b flex items-center justify-between backdrop-blur-sm ${
-          voiceMode
-            ? 'bg-primary/5 border-primary/30 shadow-[0_0_0_1px_rgba(59,130,246,0.2)]'
-            : 'bg-background/50 border-border/50'
-        }`}
-      >
+    <div className="flex h-full flex-col bg-[#060b14] text-white">
+      <div className="flex h-[68px] shrink-0 items-center justify-between border-b border-white/8 py-0 pl-16 pr-7">
         <div className="flex items-center gap-2">
           {onBack && (
             <button
               onClick={onBack}
-              className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
+              className="rounded-lg p-1.5 text-white/85 transition-colors hover:bg-white/[0.05] hover:text-white"
               aria-label="Back to document selector"
               title="Back to document selector"
             >
-              <ArrowLeft className="size-4" />
+              <ArrowLeft className="size-5" />
             </button>
           )}
-          <ChatCircleDots className="size-4 text-muted-foreground" />
-          <h2 className="text-sm font-medium">Chat</h2>
+          <h2 className="text-lg font-semibold tracking-tight">Chat</h2>
           {voiceMode && (
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-primary bg-primary/15 border border-primary/30 px-2 py-0.5 rounded-full">
+            <span className="rounded-full border border-blue-400/30 bg-blue-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-200">
               Voice mode
             </span>
           )}
           {(isLoading || isPolling) && (
-            <span className="text-[10px] text-primary/70 animate-pulse">
+            <span className="animate-pulse text-[10px] text-blue-300/80">
               {isPolling ? 'Searching documents…' : 'Thinking…'}
             </span>
           )}
@@ -277,9 +281,8 @@ function ChatWindowInner({
         onStop={player.stop}
       />
 
-      {/* Messages — flex-1 + overflow-y-auto makes this panel independently scrollable */}
-      <div className="flex-1 overflow-y-auto min-h-0">
-        <div className="py-4 space-y-1">
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-[860px] space-y-3 px-7 py-6">
           {loading ? (
             <div className="flex items-center justify-center py-12">
               <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
@@ -301,6 +304,7 @@ function ChatWindowInner({
               <MessageBubble
                 key={msg.id}
                 message={msg}
+                documentIds={documentIds}
                 isStreaming={msg.id === streamingMessageId && msg.role === 'assistant'}
                 onStreamComplete={(id) => {
                   if (id === streamingMessageId) {
@@ -310,6 +314,7 @@ function ChatWindowInner({
                 onStreamProgress={() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' })}
                 onPlayVoice={player.play}
                 onSourceClick={onSourceClick}
+                onEvidenceClick={onEvidenceClick}
               />
             ))
           )}
@@ -330,24 +335,17 @@ function ChatWindowInner({
             ? 'Select a document to start chatting…'
             : !conversationId
               ? 'Ask a question to start this conversation…'
-              : undefined
+              : 'Ask a follow-up question...'
         }
       />
     </div>
   );
 }
 
-export function ChatWindow({ conversationId, documentId, createConversation, onConversationCreated, onBack, onSourceClick }: ChatWindowProps) {
+export function ChatWindow(props: ChatWindowProps) {
   return (
     <ChatErrorBoundary>
-      <ChatWindowInner
-        conversationId={conversationId}
-        documentId={documentId}
-        createConversation={createConversation}
-        onConversationCreated={onConversationCreated}
-        onBack={onBack}
-        onSourceClick={onSourceClick}
-      />
+      <ChatWindowInner {...props} />
     </ChatErrorBoundary>
   );
 }

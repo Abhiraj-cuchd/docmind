@@ -13,6 +13,7 @@ export default function ChatPage() {
     <ThreePanelLayout
       activeConversationId={selection.conversationId}
       activeDocumentId={selection.documentId}
+      activeDocumentIds={selection.documentIds ?? []}
       setSelection={setSelection}
       updateSelection={updateSelection}
       onBack={() => {

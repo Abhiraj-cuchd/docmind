@@ -1,19 +1,21 @@
 'use client';
 
-import { Message } from '@/lib/types';
+import { ChunkEvidence, Message } from '@/lib/types';
 import { Citations } from './Citations';
 import { SpeakerHigh } from '@phosphor-icons/react';
 import { useEffect, useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
-import { formatDistanceToNow } from 'date-fns';
+import { BrainCircuit, UserRound } from 'lucide-react';
 
 interface MessageBubbleProps {
   message: Message;
+  documentIds?: string[];
   isStreaming?: boolean;
   onStreamComplete?: (messageId: string) => void;
   onStreamProgress?: () => void;
   onPlayVoice?: (urls: string[]) => void;
   onSourceClick?: (source: import('@/lib/types').Source) => void;
+  onEvidenceClick?: (evidence: ChunkEvidence) => void;
 }
 
 const PATH_LABELS: Record<string, { label: string; color: string }> = {
@@ -24,7 +26,7 @@ const PATH_LABELS: Record<string, { label: string; color: string }> = {
   rag_fallback: { label: 'General Knowledge', color: 'bg-orange-500/15 text-orange-400 border-orange-500/20' },
 };
 
-export function MessageBubble({ message, isStreaming, onStreamComplete, onStreamProgress, onPlayVoice, onSourceClick }: MessageBubbleProps) {
+export function MessageBubble({ message, documentIds, isStreaming, onStreamComplete, onStreamProgress, onPlayVoice, onSourceClick, onEvidenceClick }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const pathInfo = message.path ? PATH_LABELS[message.path] : null;
   const [displayText, setDisplayText] = useState(message.content);
@@ -75,43 +77,46 @@ export function MessageBubble({ message, isStreaming, onStreamComplete, onStream
     return () => window.clearInterval(interval);
   }, [isStreaming, isUser, message.content, message.id, onStreamComplete, onStreamProgress, prefersReducedMotion]);
 
-  const formattedContent = isUser ? (
-    <p className="whitespace-pre-wrap">{message.content}</p>
-  ) : (
+  if (isUser) {
+    return (
+      <div className="w-full py-2">
+        <div className="mx-auto flex max-w-[640px] items-start gap-3 rounded-xl border border-white/6 bg-[#111a2a] px-5 py-4 text-[17px] leading-7 text-white shadow-[0_16px_36px_rgba(0,0,0,0.18)]">
+          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#5b5cf6] text-white shadow-[0_0_0_1px_rgba(255,255,255,0.12)]">
+            <UserRound className="h-4 w-4" />
+          </div>
+          <p className="whitespace-pre-wrap">{message.content}</p>
+        </div>
+      </div>
+    );
+  }
+
+  const formattedContent = (
     <div className="assistant-content">{renderFormattedText(displayText)}</div>
   );
 
   return (
-    <div className={cn('flex items-start gap-3 px-4 py-2', isUser ? 'flex-row-reverse' : 'flex-row')}>
-      {/* Avatar */}
-      {!isUser && (
-        <div className="w-7 h-7 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0 mt-0.5">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" className="text-primary">
-            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </div>
-      )}
+    <div className="flex w-full items-start gap-4 py-1">
+      <div className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#174fbf] text-white shadow-[0_0_0_1px_rgba(96,165,250,0.25)]">
+        <BrainCircuit className="h-5 w-5" />
+      </div>
 
-      <div className={cn('flex flex-col gap-1.5 max-w-[75%]', isUser ? 'items-end' : 'items-start')}>
-        <div
-          className={cn(
-            'rounded-2xl px-4 py-3 text-sm leading-relaxed',
-            isUser
-              ? 'message-user rounded-tr-sm'
-              : 'message-assistant rounded-tl-sm'
-          )}
-        >
+      <div className="min-w-0 flex-1">
+        <div className="text-[17px] leading-7 text-white/92">
           {formattedContent}
 
-          {/* Citations for assistant messages */}
-          {!isUser && message.sources && message.sources.length > 0 && (
-            <Citations sources={message.sources} onSourceClick={onSourceClick} />
+          {message.sources && message.sources.length > 0 && (
+            <Citations
+              sources={message.sources}
+              retrievedChunks={message.retrieved_chunks}
+              documentIds={documentIds}
+              onSourceClick={onSourceClick}
+              onEvidenceClick={onEvidenceClick}
+            />
           )}
         </div>
 
-        {/* Meta row */}
-        <div className={cn('flex items-center gap-2', isUser ? 'flex-row-reverse' : 'flex-row')}>
-          {/* Path badge */}
+        {(pathInfo || message.tokens_used || message.voice_url || (message.voice_urls && message.voice_urls.length > 0)) && (
+        <div className="mt-2 flex items-center gap-2">
           {pathInfo && (
             <span className={cn(
               'text-[10px] font-medium px-1.5 py-0.5 rounded-md border',
@@ -121,23 +126,16 @@ export function MessageBubble({ message, isStreaming, onStreamComplete, onStream
             </span>
           )}
 
-          {/* Token count */}
           {message.tokens_used && message.tokens_used > 0 && (
-            <span className="text-[10px] text-muted-foreground/60">
+            <span className="text-[10px] text-white/35">
               {message.tokens_used} tokens
             </span>
           )}
 
-          {/* Timestamp */}
-          <span className="text-[10px] text-muted-foreground/50">
-            {formatDistanceToNow(new Date(message.created_at), { addSuffix: true })}
-          </span>
-
-          {/* Voice button */}
-          {!isUser && (message.voice_url || (message.voice_urls && message.voice_urls.length > 0)) && (
+          {(message.voice_url || (message.voice_urls && message.voice_urls.length > 0)) && (
             <button
               onClick={handlePlayVoice}
-              className="flex items-center gap-1 px-2 py-1 rounded-md border border-primary/30 bg-primary/10 text-primary text-[10px] font-medium hover:bg-primary/15 transition-colors"
+              className="flex items-center gap-1 rounded-md border border-blue-400/30 bg-blue-500/10 px-2 py-1 text-[10px] font-medium text-blue-200 transition-colors hover:bg-blue-500/15"
               title="Play audio"
             >
               <SpeakerHigh className="size-3.5" />
@@ -145,6 +143,7 @@ export function MessageBubble({ message, isStreaming, onStreamComplete, onStream
             </button>
           )}
         </div>
+        )}
       </div>
     </div>
   );
@@ -188,6 +187,46 @@ function renderFormattedText(text: string) {
           })}
         </ol>
       );
+    }
+
+    // Basic Markdown Table support
+    if (lines.length >= 2 && lines[0].includes('|') && lines[1].includes('|') && lines[1].includes('-')) {
+      const rows = lines.filter(line => line.includes('|')).map(line =>
+        line.split('|').map(cell => cell.trim()).filter((_, i, arr) => {
+          // Remove empty first/last elements if line starts/ends with |
+          if (i === 0 && arr[0] === '') return false;
+          if (i === arr.length - 1 && arr[arr.length - 1] === '') return false;
+          return true;
+        })
+      );
+      if (rows.length >= 2) {
+        const headers = rows[0];
+        const dataRows = rows.slice(2); // Skip separator row
+        return (
+          <div key={`table-${blockIndex}`} className="my-4 overflow-x-auto rounded-xl border border-white/10 bg-[#09111f]">
+            <table className="w-full text-left text-[15px]">
+              <thead className="border-b border-white/10 bg-[#0d1726] text-white">
+                <tr>
+                  {headers.map((h, i) => (
+                    <th key={`th-${i}`} className="px-4 py-3 font-semibold">{renderInline(h)}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/8 text-white/90">
+                {dataRows.map((row, rIdx) => (
+                  <tr key={`tr-${rIdx}`} className="transition-colors hover:bg-white/[0.03]">
+                    {row.map((cell, cIdx) => (
+                      <td key={`td-${rIdx}-${cIdx}`} className="break-words px-4 py-3 align-top">
+                        {renderInline(cell)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      }
     }
 
     return (

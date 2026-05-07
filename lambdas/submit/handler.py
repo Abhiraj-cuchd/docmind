@@ -199,6 +199,7 @@ def handle_query(event: dict) -> dict:
     conversation_id = body.get("conversation_id", "").strip()
     voice_mode      = body.get("voice_mode", False)
     response_style  = body.get("response_style", "explanatory")
+    document_ids    = body.get("document_ids", [])
 
     if response_style not in {"concise", "explanatory", "conversational"}:
         response_style = "explanatory"
@@ -258,7 +259,8 @@ def handle_query(event: dict) -> dict:
     # CONCEPT: User- and document-scoped cache key — different
     # documents avoid cross-contaminating answers.
     r         = get_redis_client()
-    cache_key = _make_cache_key(user_id, query, conversation.get("document_id"), response_style)
+    doc_part  = hashlib.sha256("|".join(sorted(document_ids)).encode()).hexdigest()[:12] if document_ids else (conversation.get("document_id") or "none")
+    cache_key = _make_cache_key(user_id, query, doc_part, response_style)
     cached_raw = r.get(cache_key)
 
     if cached_raw:
@@ -317,6 +319,7 @@ def handle_query(event: dict) -> dict:
         "conversation_id": conversation_id,
         "voice_mode":      bool(voice_mode),
         "response_style":  response_style,
+        "document_ids":    document_ids,
     }
 
     sqs_client.send_message(
@@ -571,9 +574,8 @@ def _save_exchange(
         print(f"[Submit] Warning: failed to save exchange: {e}")
 
 
-def _make_cache_key(user_id: str, query: str, document_id: str | None, style: str) -> str:
+def _make_cache_key(user_id: str, query: str, doc_part: str, style: str) -> str:
     h = hashlib.sha256(query.lower().strip().encode()).hexdigest()
-    doc_part = document_id or "none"
     return f"cache:{user_id}:{doc_part}:{style}:{h}"
 
 

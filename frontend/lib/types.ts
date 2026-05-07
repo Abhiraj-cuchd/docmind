@@ -3,6 +3,7 @@ export interface Conversation {
   user_id: string;
   title: string;
   document_id?: string | null;
+  documentIds?: string[];
   summary?: string | null;
   created_at: string;
   updated_at: string;
@@ -17,12 +18,23 @@ export interface Source {
   snippet: string;
 }
 
+export interface ChunkEvidence {
+  id: string;
+  document_id: string | null;
+  content: string;
+  page_number: number | null;
+  filename: string;
+  section: string | null;
+  rrf_score?: number;
+}
+
 export interface Message {
   id: string;
   conversation_id: string;
   role: 'user' | 'assistant';
   content: string;
   sources?: Source[];
+  retrieved_chunks?: ChunkEvidence[];
   voice_url?: string | null;
   voice_urls?: string[] | null;
   voice_credits_remaining?: number;
@@ -51,6 +63,7 @@ export interface QueryRequest {
   conversation_id: string;
   voice_mode: boolean;
   response_style?: ResponseStyle;
+  document_ids?: string[];
 }
 
 export interface QueryResponse {

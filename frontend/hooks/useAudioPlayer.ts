@@ -17,6 +17,7 @@ export function useAudioPlayer(): UseAudioPlayerReturn {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const urlsRef = useRef<string[]>([]);
   const indexRef = useRef(0);
+  const playFromIndexRef = useRef<(index: number) => void>(() => {});
 
   const cleanupAudio = useCallback(() => {
     if (!audioRef.current) return;
@@ -45,12 +46,16 @@ export function useAudioPlayer(): UseAudioPlayerReturn {
     indexRef.current = index;
     const audio = new Audio(urls[index]);
     audioRef.current = audio;
-    audio.onended = () => playFromIndex(index + 1);
+    audio.onended = () => playFromIndexRef.current(index + 1);
     audio.onerror = () => stop();
     setIsPlaying(true);
     setIsPaused(false);
     audio.play().catch(() => stop());
   }, [stop]);
+
+  useEffect(() => {
+    playFromIndexRef.current = playFromIndex;
+  }, [playFromIndex]);
 
   const play = useCallback((urls: string[]) => {
     if (!urls || urls.length === 0) {
@@ -91,4 +96,3 @@ export function useAudioPlayer(): UseAudioPlayerReturn {
     stop,
   };
 }
-

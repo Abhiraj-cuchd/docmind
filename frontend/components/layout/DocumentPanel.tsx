@@ -1,595 +1,407 @@
-'use client'
+'use client';
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { createClient } from '@/lib/supabase/client'
-import {
-  FileText, Upload, AlertCircle,
-  CheckCircle, Loader2,
-  ExternalLink, RefreshCw, ArrowLeft, X, Trash2
-} from 'lucide-react'
-import type { Source } from '@/lib/types'
-import { Button } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger
-} from '@/components/ui/tooltip'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { toast } from 'sonner'
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { ComponentType } from 'react';
+import { createClient } from '@/lib/supabase/client';
+import { useDocuments } from '@/hooks/useDocuments';
+import type { Source } from '@/lib/types';
+import PDFViewer, { HighlightTarget } from '@/components/pdf/PDFViewer';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
+import { ArrowUpRight, Download, FileText, Highlighter, Info, LayoutGrid, Loader2, MoreVertical, NotebookPen, Printer, TriangleAlert } from 'lucide-react';
+import { getDocColor } from '@/lib/docColors';
+import { toast } from 'sonner';
 
-// ─────────────────────────────────────────────────────────────────────
-// TYPES
-// ─────────────────────────────────────────────────────────────────────
+interface ReferencedDoc {
+  id: string;
+  filename: string;
+}
 
-interface Document {
-  id: string
-  filename: string
-  status: 'processing' | 'indexing' | 'ready' | 'failed' | 'partial'
-  chunk_count: number | null
-  created_at: string
-  skipped_pages: { page_number: number; reason: string }[]
-  doc_metadata: {
-    total_pages?: number
-    extracted_pages?: number
-    file_size_bytes?: number
-  } | null
+interface ViewerDocument {
+  id: string;
+  filename: string;
+  status?: string;
 }
 
 interface DocumentPanelProps {
-  userId: string
-  activeDocumentId: string | null
-  onDocumentSelect: (documentId: string, filename?: string) => void
-  onDocumentDeleted?: (documentId: string) => void
-  activeSource?: Source | null
-  onClearActiveSource?: () => void
+  activeDocumentId: string | null;
+  activeDocumentIds: string[];
+  referencedDocs: ReferencedDoc[];
+  onDocumentSelect: (documentId: string) => void;
+  onClearAll: () => void;
+  activeSource?: Source | null;
+  onClearActiveSource?: () => void;
+  activeHighlight?: HighlightTarget | null;
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// HELPERS
-// ─────────────────────────────────────────────────────────────────────
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
-function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString('en-IN', {
-    day:   '2-digit',
-    month: 'short',
-    year:  'numeric',
-  })
-}
-
-function StatusBadge({ status }: { status: Document['status'] }) {
-  const config = {
-    processing: { label: 'Processing', icon: Loader2,      cls: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30', spin: true  },
-    indexing:   { label: 'Indexing',   icon: Loader2,      cls: 'bg-blue-500/20 text-blue-400 border-blue-500/30',       spin: true  },
-    ready:      { label: 'Ready',      icon: CheckCircle,  cls: 'bg-green-500/20 text-green-400 border-green-500/30',    spin: false },
-    failed:     { label: 'Failed',     icon: AlertCircle,  cls: 'bg-red-500/20 text-red-400 border-red-500/30',          spin: false },
-    partial:    { label: 'Partial',    icon: AlertCircle,  cls: 'bg-orange-500/20 text-orange-400 border-orange-500/30', spin: false },
-  }
-
-  const { label, icon: Icon, cls, spin } = config[status]
-
+function FooterAction({
+  icon: Icon,
+  label,
+  onClick,
+  disabled,
+}: {
+  icon: ComponentType<{ className?: string }>;
+  label: string;
+  onClick?: () => void;
+  disabled?: boolean;
+}) {
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border ${cls}`}>
-      <Icon className={`w-3 h-3 ${spin ? 'animate-spin' : ''}`} />
-      {label}
-    </span>
-  )
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// DOCUMENT CARD
-// ─────────────────────────────────────────────────────────────────────
-
-interface DocumentCardProps {
-  document: Document
-  isActive: boolean
-  isDeleting: boolean
-  onSelect: () => void
-  onDeleteRequest: (doc: Document) => void
-}
-
-function DocumentCard({ document, isActive, isDeleting, onSelect, onDeleteRequest }: DocumentCardProps) {
-  const totalPages   = document.doc_metadata?.total_pages
-  const fileSize     = document.doc_metadata?.file_size_bytes
-  const skippedCount = document.skipped_pages?.length ?? 0
-  const isReady      = document.status === 'ready' || document.status === 'partial'
-  const isProcessing = ['processing', 'indexing'].includes(document.status)
-
-  const handleDeleteClick = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    onDeleteRequest(document)
-  }
-
-  return (
-    <div
-      className={`
-        flex flex-col gap-2 p-3 rounded-lg border cursor-pointer
-        transition-all duration-150
-        ${isActive
-          ? 'border-blue-500/50 bg-blue-500/10'
-          : 'border-zinc-700/50 bg-zinc-800/30 hover:border-zinc-600 hover:bg-zinc-800/60'
-        }
-        ${isDeleting ? 'opacity-50 pointer-events-none' : ''}
-      `}
-      onClick={onSelect}
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="inline-flex h-11 items-center gap-2 rounded-xl border border-white/8 bg-[#0a1220] px-4 text-sm text-white/75 transition-colors hover:bg-white/[0.05] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
     >
-      {/* Top row */}
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-start gap-2 min-w-0">
-          <FileText className={`w-4 h-4 mt-0.5 shrink-0 ${isActive ? 'text-blue-400' : 'text-zinc-400'}`} />
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-zinc-100 truncate leading-tight">
-              {document.filename}
-            </p>
-            <p className="text-xs text-zinc-500 mt-0.5">
-              {formatDate(document.created_at)}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-1.5 shrink-0">
-          <StatusBadge status={document.status} />
-
-          {!isProcessing && (
-            isDeleting ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-zinc-500" />
-            ) : (
-              <button
-                onClick={handleDeleteClick}
-                className="p-1 rounded text-zinc-600/50 hover:text-red-400 hover:bg-red-500/10 transition-all"
-                title="Delete document"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            )
-          )}
-        </div>
-      </div>
-
-      {/* Meta row */}
-      {isReady && (
-        <div className="flex items-center gap-3 text-xs text-zinc-500">
-          {document.chunk_count && (
-            <span>{document.chunk_count.toLocaleString()} chunks</span>
-          )}
-          {totalPages && <span>{totalPages} pages</span>}
-          {fileSize && <span>{formatBytes(fileSize)}</span>}
-        </div>
-      )}
-
-      {/* Skipped pages warning */}
-      {skippedCount > 0 && (
-        <div className="flex items-center gap-1.5 text-xs text-yellow-500/80">
-          <AlertCircle className="w-3 h-3 shrink-0" />
-          <span>{skippedCount} page{skippedCount > 1 ? 's' : ''} skipped (images only)</span>
-        </div>
-      )}
-
-      {/* Processing indicator */}
-      {isProcessing && (
-        <div className="flex items-center gap-1.5 text-xs text-blue-400/80">
-          <Loader2 className="w-3 h-3 animate-spin shrink-0" />
-          <span>
-            {document.status === 'processing' ? 'Extracting text...' : 'Generating embeddings...'}
-          </span>
-        </div>
-      )}
-
-      {/* Click hint for ready docs */}
-      {isReady && !isActive && (
-        <p className="text-[10px] text-zinc-600">Click to preview</p>
-      )}
-    </div>
-  )
+      <Icon className="h-4 w-4" />
+      {label}
+    </button>
+  );
 }
-
-// ─────────────────────────────────────────────────────────────────────
-// MAIN DOCUMENT PANEL
-// ─────────────────────────────────────────────────────────────────────
 
 export default function DocumentPanel({
-  userId,
   activeDocumentId,
+  activeDocumentIds,
+  referencedDocs,
   onDocumentSelect,
-  onDocumentDeleted,
+  onClearAll,
   activeSource,
   onClearActiveSource,
+  activeHighlight,
 }: DocumentPanelProps) {
-  const [documents, setDocuments]     = useState<Document[]>([])
-  const [loading, setLoading]         = useState(true)
-  const [lastRefresh, setLastRefresh] = useState<Date>(new Date())
+  const { documents } = useDocuments();
+  const supabase = createClient();
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState<number>(activeHighlight?.pageNumber ?? 1);
+  const [numPages, setNumPages] = useState<number>(0);
 
-  // Delete confirmation modal state
-  const [deleteTarget, setDeleteTarget] = useState<Document | null>(null)
-  const [deleting, setDeleting]         = useState(false)
+  const viewerDocumentIds = useMemo(
+    () => referencedDocs.length > 0
+      ? referencedDocs.map(doc => doc.id)
+      : activeDocumentIds.length > 0
+        ? activeDocumentIds
+        : activeDocumentId
+          ? [activeDocumentId]
+          : [],
+    [activeDocumentId, activeDocumentIds, referencedDocs],
+  );
 
-  // Preview state
-  const [previewDoc, setPreviewDoc]   = useState<Document | null>(null)
-  const [pdfUrl, setPdfUrl]           = useState<string | null>(null)
-  const [pdfLoading, setPdfLoading]   = useState(false)
-  const [pdfError, setPdfError]       = useState<string | null>(null)
+  const viewerDocuments = useMemo<ViewerDocument[]>(
+    () => viewerDocumentIds.map((documentId) => {
+      const doc = documents.find(item => item.id === documentId);
+      const fallback = referencedDocs.find(item => item.id === documentId);
+      return {
+        id: documentId,
+        filename: doc?.filename ?? fallback?.filename ?? 'Document.pdf',
+        status: doc?.status,
+      };
+    }),
+    [documents, referencedDocs, viewerDocumentIds],
+  );
 
-  const supabase = createClient()
+  const resolvedActiveDocumentId =
+    activeDocumentId && viewerDocumentIds.includes(activeDocumentId)
+      ? activeDocumentId
+      : viewerDocumentIds[0] ?? null;
+  const activeDocument = viewerDocuments.find(doc => doc.id === resolvedActiveDocumentId) ?? null;
+  const highlight = useMemo<HighlightTarget | null>(
+    () => activeHighlight ?? (
+      activeSource
+        ? { content: activeSource.snippet, pageNumber: activeSource.page_number ?? 1 }
+        : null
+    ),
+    [activeHighlight, activeSource],
+  );
 
-  // ── Fetch documents ─────────────────────────────────────────────
-  const fetchDocuments = useCallback(async () => {
-    try {
-      const { data, error } = await supabase
-        .schema('rag')
-        .from('documents')
-        .select('id, filename, status, chunk_count, created_at, skipped_pages, doc_metadata')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false })
+  useEffect(() => {
+    setCurrentPage(highlight?.pageNumber ?? 1);
+  }, [highlight?.pageNumber, resolvedActiveDocumentId]);
 
-      if (error) throw error
-      setDocuments(data ?? [])
-      setLastRefresh(new Date())
-    } catch (e) {
-      console.error('Failed to fetch documents:', e)
-    } finally {
-      setLoading(false)
+  useEffect(() => {
+    setNumPages(0);
+  }, [resolvedActiveDocumentId]);
+
+  useEffect(() => {
+    if (!resolvedActiveDocumentId) {
+      setPdfUrl(null);
+      setPdfError(null);
+      return;
     }
-  }, [userId, supabase])
 
-  useEffect(() => { fetchDocuments() }, [fetchDocuments])
-
-  // Auto-refresh while any doc is processing
-  useEffect(() => {
-    const hasActive = documents.some(d => d.status === 'processing' || d.status === 'indexing')
-    if (!hasActive) return
-    const interval = setInterval(fetchDocuments, 3000)
-    return () => clearInterval(interval)
-  }, [documents, fetchDocuments])
-
-  // ── Auto-open preview for the initially selected document ────────
-  // Runs once after documents first load when activeDocumentId is set
-  const hasAutoOpened = useRef(false)
-  useEffect(() => {
-    if (hasAutoOpened.current || !activeDocumentId || documents.length === 0) return
-    const doc = documents.find(d => d.id === activeDocumentId)
-    if (doc?.status === 'ready') {
-      setPreviewDoc(doc)
-      hasAutoOpened.current = true
-    }
-  }, [documents, activeDocumentId])
-
-  useEffect(() => {
-    if (!activeSource) return
-    const doc = documents.find(d => d.id === activeSource.document_id)
-    if (doc?.status === 'ready') setPreviewDoc(doc)
-  }, [activeSource, documents])
-
-  // ── Fetch presigned URL when previewDoc changes ─────────────────
-  useEffect(() => {
-    if (!previewDoc) {
-      setPdfUrl(null)
-      setPdfError(null)
-      return
-    }
+    let cancelled = false;
 
     async function fetchUrl() {
-      setPdfLoading(true)
-      setPdfUrl(null)
-      setPdfError(null)
+      setPdfLoading(true);
+      setPdfUrl(null);
+      setPdfError(null);
+
       try {
-        const { data: { session } } = await supabase.auth.getSession()
-        if (!session) { setPdfError('Not authenticated'); return }
-
-        const res = await fetch(`/api/document-url?document_id=${previewDoc!.id}`, {
-          headers: { 'Authorization': `Bearer ${session.access_token}` },
-        })
-
-        if (!res.ok) {
-          const err = await res.json()
-          setPdfError(err.message || 'Failed to load document')
-          return
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          if (!cancelled) setPdfError('Not authenticated');
+          return;
         }
 
-        const data = await res.json()
-        setPdfUrl(data.document_url)
+        const res = await fetch(`/api/document-url?document_id=${resolvedActiveDocumentId}`, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          if (!cancelled) setPdfError(err.message || 'Failed to load document');
+          return;
+        }
+
+        const data = await res.json();
+        if (!cancelled) {
+          setPdfUrl(data.document_url);
+        }
       } catch {
-        setPdfError('Failed to load document preview')
+        if (!cancelled) {
+          setPdfError('Failed to load document preview');
+        }
       } finally {
-        setPdfLoading(false)
+        if (!cancelled) {
+          setPdfLoading(false);
+        }
       }
     }
 
-    fetchUrl()
-  }, [previewDoc, supabase])
+    void fetchUrl();
 
-  // ── Handle card selection ────────────────────────────────────────
-  const handleSelect = useCallback((doc: Document) => {
-    onDocumentSelect(doc.id, doc.filename)
-    if (doc.status === 'ready') {
-      setPreviewDoc(doc)
+    return () => {
+      cancelled = true;
+    };
+  }, [resolvedActiveDocumentId, supabase]);
+
+  const handleOpenCurrent = useCallback(() => {
+    if (!pdfUrl) return;
+    window.open(pdfUrl, '_blank', 'noopener,noreferrer');
+  }, [pdfUrl]);
+
+  const handleHighlightPage = useCallback(() => {
+    if (!highlight) return;
+    setCurrentPage(highlight.pageNumber);
+  }, [highlight]);
+
+  const handleAddNote = useCallback(() => {
+    if (!activeSource?.snippet) {
+      toast.info('No source snippet is active on this page yet.');
+      return;
     }
-  }, [onDocumentSelect])
 
-  const handleConfirmDelete = useCallback(async () => {
-    if (!deleteTarget) return
-    const docId = deleteTarget.id
-    setDeleting(true)
-    try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) { toast.error('Not authenticated'); setDeleting(false); return }
+    navigator.clipboard.writeText(activeSource.snippet).then(
+      () => toast.success('Snippet copied to clipboard'),
+      () => toast.error('Could not copy the snippet'),
+    );
+  }, [activeSource]);
 
-      const res = await fetch(`/api/documents/${docId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      })
+  const handleDownload = useCallback(() => {
+    if (!pdfUrl) return;
+    const link = document.createElement('a');
+    link.href = pdfUrl;
+    link.download = activeDocument?.filename ?? 'document.pdf';
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.click();
+  }, [activeDocument?.filename, pdfUrl]);
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        toast.error(err.error || 'Failed to delete document')
-        setDeleting(false)
-        return
-      }
+  const handlePrint = useCallback(() => {
+    if (!pdfUrl) return;
+    window.open(pdfUrl, '_blank', 'noopener,noreferrer');
+  }, [pdfUrl]);
 
-      setDocuments(prev => prev.filter(d => d.id !== docId))
-      if (previewDoc?.id === docId) setPreviewDoc(null)
-      onDocumentDeleted?.(docId)
-      toast.success('Document deleted')
-      setDeleteTarget(null)
-    } catch {
-      toast.error('Failed to delete document')
-    } finally {
-      setDeleting(false)
-    }
-  }, [deleteTarget, supabase, previewDoc, onDocumentDeleted])
-
-  const iframeSrc = useMemo(() => {
-    if (!pdfUrl) return null
-    const page = activeSource?.page_number
-    const pageParam = page ? `page=${page}&` : ''
-    return `${pdfUrl}#${pageParam}toolbar=0&navpanes=0&scrollbar=0&pagemode=none&view=FitH&zoom=page-width`
-  }, [pdfUrl, activeSource])
-
-  // ── Preview pane (full panel) ────────────────────────────────────
-  if (previewDoc) {
+  if (!activeDocument) {
     return (
-      <div className="flex flex-col h-full w-full border-l border-zinc-800 bg-zinc-900">
-        {/* Preview header */}
-        <div className="flex items-center justify-between px-3 py-3 border-b border-zinc-800 shrink-0 gap-2">
-          <div className="flex items-center gap-2 min-w-0">
+      <aside className="flex h-full w-full flex-col bg-[#060d18]">
+        <div className="border-b border-white/8 px-6 py-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-white">
+              <span className="text-lg font-semibold">Referenced Documents (0)</span>
+              <Info className="h-4 w-4 text-white/35" />
+            </div>
             <button
-              onClick={() => setPreviewDoc(null)}
-              className="p-1 rounded-md text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors shrink-0"
+              type="button"
+              onClick={onClearAll}
+              className="text-sm text-white/45 transition-colors hover:text-white"
             >
-              <ArrowLeft className="w-4 h-4" />
+              Clear all
             </button>
-            <FileText className="w-4 h-4 text-blue-400 shrink-0" />
-            <span className="text-sm font-medium text-zinc-200 truncate">
-              {previewDoc.filename}
-            </span>
-          </div>
-
-          <div className="flex items-center gap-1 shrink-0">
-            {pdfUrl && (
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <a
-                      href={pdfUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="p-1.5 rounded-md text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                    </a>
-                  </TooltipTrigger>
-                  <TooltipContent>Open in new tab</TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            )}
           </div>
         </div>
 
-        {/* Active source snippet strip */}
-        {activeSource && (
-          <div className="px-3 py-2 border-b border-zinc-800 bg-zinc-800/40 shrink-0">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <p className="text-xs text-zinc-500 mb-1">
-                  Source · {activeSource.page_number ? `Page ${activeSource.page_number}` : activeSource.filename}
-                  {activeSource.section && ` · ${activeSource.section}`}
-                </p>
-                <p className="text-xs text-zinc-300 leading-relaxed line-clamp-3">
-                  {activeSource.snippet}
-                </p>
-              </div>
-              <button
-                onClick={() => onClearActiveSource?.()}
-                className="p-1 rounded text-zinc-600 hover:text-zinc-400 shrink-0"
-              >
-                <X className="w-3 h-3" />
-              </button>
+        <div className="flex flex-1 items-center justify-center px-10 text-center">
+          <div className="max-w-sm">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-white/8 bg-white/[0.03]">
+              <FileText className="h-7 w-7 text-white/30" />
             </div>
+            <p className="mt-5 text-lg font-medium text-white">No document selected</p>
+            <p className="mt-2 text-sm text-white/45">
+              Pick a document from the library or start a conversation to open the viewer.
+            </p>
           </div>
-        )}
-
-        {/* Iframe fills all remaining height */}
-        <div className="flex-1 overflow-hidden bg-zinc-950">
-          {pdfLoading && (
-            <div className="flex flex-col items-center justify-center h-full gap-3 text-zinc-400">
-              <Loader2 className="w-8 h-8 animate-spin text-blue-400" />
-              <p className="text-sm">Loading preview...</p>
-            </div>
-          )}
-
-          {pdfError && (
-            <div className="flex flex-col items-center justify-center h-full gap-3">
-              <AlertCircle className="w-8 h-8 text-red-400" />
-              <p className="text-sm text-red-400 text-center px-4">{pdfError}</p>
-              <Button variant="outline" size="sm" onClick={() => setPreviewDoc({ ...previewDoc })}>
-                Retry
-              </Button>
-            </div>
-          )}
-
-          {iframeSrc && !pdfLoading && !pdfError && (
-            <iframe
-              src={iframeSrc}
-              className="w-full h-full"
-              title={previewDoc.filename}
-            />
-          )}
         </div>
-      </div>
-    )
+      </aside>
+    );
   }
 
-  // ── List pane ────────────────────────────────────────────────────
   return (
-    <div className="flex flex-col h-full w-full border-l border-zinc-800 bg-zinc-900">
-
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-3 border-b border-zinc-800 shrink-0">
-        <div className="flex items-center gap-2">
-          <FileText className="w-4 h-4 text-zinc-400" />
-          <span className="text-sm font-medium text-zinc-200">Documents</span>
-          {documents.length > 0 && (
-            <span className="text-xs text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded-full">
-              {documents.length}
-            </span>
-          )}
-        </div>
-
-        <div className="flex items-center gap-1">
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={fetchDocuments}
-                  className="p-1.5 rounded-md text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>Refresh</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-
-        </div>
-      </div>
-
-      {/* Upload button */}
-      <div className="px-3 py-2 shrink-0">
-        <a href="/upload">
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full gap-2 border-dashed border-zinc-600 text-zinc-400 hover:text-zinc-100 hover:border-zinc-400 bg-transparent"
+    <aside className="flex h-full w-full flex-col bg-[#060d18] text-white">
+      <div className="border-b border-white/8 px-6 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-lg font-semibold">Referenced Documents ({viewerDocuments.length})</span>
+            <Info className="h-4 w-4 text-white/35" />
+          </div>
+          <button
+            type="button"
+            onClick={onClearAll}
+            className="text-sm text-white/45 transition-colors hover:text-white"
           >
-            <Upload className="w-3.5 h-3.5" />
-            Upload Document
-          </Button>
-        </a>
-      </div>
+            Clear all
+          </button>
+        </div>
 
-      {/* Document list */}
-      <ScrollArea className="flex-1 px-3 pb-3">
-        {loading ? (
-          <div className="flex flex-col gap-2 mt-1">
-            {[1, 2, 3].map(i => (
-              <div key={i} className="h-20 rounded-lg bg-zinc-800/50 animate-pulse" />
-            ))}
-          </div>
-        ) : documents.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 gap-3 text-center">
-            <div className="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center">
-              <FileText className="w-6 h-6 text-zinc-600" />
-            </div>
-            <div>
-              <p className="text-sm text-zinc-400 font-medium">No documents yet</p>
-              <p className="text-xs text-zinc-600 mt-1">Upload a PDF to start asking questions</p>
-            </div>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-2 mt-1">
-            {documents.map(doc => (
-              <DocumentCard
+        <div className="mt-3 flex gap-3 overflow-x-auto pb-1">
+          {viewerDocuments.map((doc) => {
+            const color = getDocColor(doc.id, viewerDocumentIds);
+            const isActive = doc.id === resolvedActiveDocumentId;
+
+            return (
+              <button
                 key={doc.id}
-                document={doc}
-                isActive={activeDocumentId === doc.id}
-                isDeleting={deleting && deleteTarget?.id === doc.id}
-                onSelect={() => handleSelect(doc)}
-                onDeleteRequest={setDeleteTarget}
-              />
-            ))}
-          </div>
-        )}
-      </ScrollArea>
-
-      {/* Footer */}
-      <div className="px-3 py-2 border-t border-zinc-800 shrink-0">
-        <p className="text-xs text-zinc-600">
-          Updated {lastRefresh.toLocaleTimeString('en-IN', {
-            hour:   '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
+                type="button"
+                onClick={() => onDocumentSelect(doc.id)}
+                className={cn(
+                  'min-w-[208px] rounded-2xl border px-4 py-2 text-left transition-colors',
+                  isActive
+                    ? 'border-[#2c5cb8] bg-[#15326e] shadow-[0_8px_24px_rgba(21,50,110,0.32)]'
+                    : 'border-white/8 bg-[#09111f] hover:bg-[#0d1830]',
+                )}
+              >
+                <div className="flex items-start gap-3">
+                  <div className={cn(
+                    'mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-xl border',
+                    isActive ? 'border-white/12 bg-white/10' : `${color.border} ${color.bg}`,
+                  )}>
+                    <FileText className={cn('h-4 w-4', isActive ? 'text-white' : color.text)} strokeWidth={2.2} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className={cn(
+                      'truncate text-[15px] font-medium',
+                      isActive ? 'text-white' : 'text-slate-100',
+                    )}>
+                      {doc.filename}
+                    </p>
+                    <p className={cn(
+                      'mt-1 text-xs',
+                      isActive ? 'text-blue-100/90' : 'text-white/35',
+                    )}>
+                      {isActive ? 'Active' : (doc.status === 'ready' ? 'Ready to review' : doc.status ?? 'Available')}
+                    </p>
+                  </div>
+                  {isActive ? <ArrowUpRight className="mt-0.5 h-4 w-4 text-white/70" /> : null}
+                </div>
+              </button>
+            );
           })}
-        </p>
+        </div>
       </div>
 
-      {/* Delete confirmation modal */}
-      <Dialog open={!!deleteTarget} onOpenChange={open => { if (!open && !deleting) setDeleteTarget(null) }}>
-        <DialogContent className="max-w-sm bg-zinc-900 border-zinc-700 text-zinc-100">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-zinc-100">
-              <Trash2 className="w-4 h-4 text-red-400" />
-              Delete Document
-            </DialogTitle>
-            <DialogDescription className="text-zinc-400 text-sm leading-relaxed">
-              <span className="font-medium text-zinc-200 block truncate mb-2">
-                {deleteTarget?.filename}
-              </span>
-              This will permanently delete the document and{' '}
-              <span className="text-red-400 font-medium">all conversations</span>{' '}
-              associated with it. This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-2">
+      <div className="flex items-center justify-between border-b border-white/8 px-6 py-2.5">
+        <div className="min-w-0">
+          <p className="truncate text-lg font-medium text-white">{activeDocument.filename}</p>
+        </div>
+        <div className="ml-4 flex items-center gap-3 text-sm text-white/70">
+          <span>Page {numPages > 0 ? currentPage : '—'} of {numPages > 0 ? numPages : '—'}</span>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setCurrentPage(page => Math.max(1, page - 1))}
+              disabled={currentPage <= 1}
+              className="rounded-lg p-1.5 text-white/60 transition-colors hover:bg-white/[0.05] hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+            >
+              ‹
+            </button>
+            <button
+              type="button"
+              onClick={() => setCurrentPage(page => Math.min(numPages || page, page + 1))}
+              disabled={numPages > 0 && currentPage >= numPages}
+              className="rounded-lg p-1.5 text-white/60 transition-colors hover:bg-white/[0.05] hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+            >
+              ›
+            </button>
+            <button
+              type="button"
+              onClick={handleOpenCurrent}
+              className="rounded-lg p-1.5 text-white/60 transition-colors hover:bg-white/[0.05] hover:text-white"
+            >
+              <MoreVertical className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-hidden bg-[#050c17]">
+        {pdfLoading ? (
+          <div className="flex h-full flex-col items-center justify-center gap-3 text-white/55">
+            <Loader2 className="h-8 w-8 animate-spin text-blue-400" />
+            <p className="text-sm">Loading preview...</p>
+          </div>
+        ) : pdfError ? (
+          <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+            <TriangleAlert className="h-8 w-8 text-amber-400" />
+            <p className="text-sm text-white/80">{pdfError}</p>
             <Button
+              type="button"
               variant="outline"
-              size="sm"
-              onClick={() => setDeleteTarget(null)}
-              disabled={deleting}
-              className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
+              onClick={() => onDocumentSelect(activeDocument.id)}
+              className="border-white/12 bg-white/[0.03] text-white hover:bg-white/[0.05]"
             >
-              Cancel
+              Retry
             </Button>
-            <Button
-              size="sm"
-              onClick={handleConfirmDelete}
-              disabled={deleting}
-              className="bg-red-600 hover:bg-red-700 text-white border-0"
-            >
-              {deleting ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
-                  Deleting...
-                </>
-              ) : (
-                'Delete'
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  )
+          </div>
+        ) : pdfUrl ? (
+          <PDFViewer
+            key={activeDocument.id}
+            url={pdfUrl}
+            currentPage={currentPage}
+            onPageChange={setCurrentPage}
+            onPageCountChange={setNumPages}
+            highlight={highlight}
+          />
+        ) : null}
+      </div>
+
+      <div className="border-t border-white/8 px-5 py-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <FooterAction
+            icon={Highlighter}
+            label="Highlight on page"
+            onClick={handleHighlightPage}
+            disabled={!highlight}
+          />
+          <FooterAction
+            icon={NotebookPen}
+            label="Add note"
+            onClick={handleAddNote}
+            disabled={!activeSource}
+          />
+          <FooterAction icon={Printer} label="Print" onClick={handlePrint} disabled={!pdfUrl} />
+          <FooterAction icon={Download} label="Download" onClick={handleDownload} disabled={!pdfUrl} />
+          <button
+            type="button"
+            onClick={() => {
+              onClearActiveSource?.();
+              handleOpenCurrent();
+            }}
+            className="ml-auto flex h-11 w-11 items-center justify-center rounded-xl border border-white/8 bg-[#0a1220] text-white/75 transition-colors hover:bg-white/[0.05] hover:text-white"
+          >
+            <LayoutGrid className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    </aside>
+  );
 }

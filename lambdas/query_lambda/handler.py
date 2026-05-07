@@ -100,6 +100,7 @@ def _process_record(record: dict) -> None:
     conversation_id = body["conversation_id"]
     voice_mode      = body.get("voice_mode", False)
     response_style  = body.get("response_style", "explanatory")
+    document_ids    = body.get("document_ids", [])
     document_id     = _get_conversation_document_id(conversation_id, user_id)
 
     print(f"[Handler] Job {job_id}: '{query[:80]}'")
@@ -135,7 +136,8 @@ def _process_record(record: dict) -> None:
         # ── Step 1: Cache check (free — Redis) ─────────────────────
         # CONCEPT: User-scoped cache key — different users asking the
         # same question get answers from their own documents.
-        cache_key = _make_cache_key(user_id, query, document_id, response_style)
+        doc_part  = hashlib.sha256("|".join(sorted(document_ids)).encode()).hexdigest()[:12] if document_ids else (document_id or "none")
+        cache_key = _make_cache_key(user_id, query, doc_part, response_style)
         cached_raw = r.get(cache_key)
 
         if cached_raw:
@@ -304,13 +306,23 @@ def _process_record(record: dict) -> None:
 
         # ── Step 7: Hybrid search (free — Supabase HNSW + BM25) ───
         print(f"[Handler] Running hybrid search (Supabase — free)")
-        candidates = execute_hybrid_search(
-            user_id=user_id,
-            query_embedding=direct_embedding,
-            query_text=search_query,
-            match_count=20,
-            document_id=document_id,
-        )
+        if document_ids:
+            results_obj = supabase.schema("rag").rpc("hybrid_search_multi_doc", {
+                "query_embedding": direct_embedding,
+                "query_text": search_query,
+                "target_user_id": user_id,
+                "doc_ids": document_ids,
+                "match_count": 20,
+            }).execute()
+            candidates = results_obj.data or []
+        else:
+            candidates = execute_hybrid_search(
+                user_id=user_id,
+                query_embedding=direct_embedding,
+                query_text=search_query,
+                match_count=20,
+                document_id=document_id,
+            )
 
         print(f"[Handler] Hybrid search: {len(candidates)} candidates")
 
@@ -383,13 +395,23 @@ def _process_record(record: dict) -> None:
                 tokens_used += 1
                 hyde_embedding, hyp_answer = generate_hyde_embedding(query)
 
-                hyde_candidates = execute_hybrid_search(
-                    user_id=user_id,
-                    query_embedding=hyde_embedding,
-                    query_text=search_query,
-                    match_count=20,
-                    document_id=document_id,
-                )
+                if document_ids:
+                    hyde_results_obj = supabase.schema("rag").rpc("hybrid_search_multi_doc", {
+                        "query_embedding": hyde_embedding,
+                        "query_text": search_query,
+                        "target_user_id": user_id,
+                        "doc_ids": document_ids,
+                        "match_count": 20,
+                    }).execute()
+                    hyde_candidates = hyde_results_obj.data or []
+                else:
+                    hyde_candidates = execute_hybrid_search(
+                        user_id=user_id,
+                        query_embedding=hyde_embedding,
+                        query_text=search_query,
+                        match_count=20,
+                        document_id=document_id,
+                    )
 
                 if hyde_candidates:
                     hyde_top = hyde_candidates[0].get("rrf_score", 0)
@@ -546,7 +568,7 @@ def _finish(
             "page_number": c["metadata"].get("page_number"),
             "filename":    c["metadata"].get("filename"),
             "section":     c["metadata"].get("section"),
-            "snippet":     c.get("content", "")[:250],
+            "snippet":     c.get("content", ""),
         }
         for c in retrieved_chunks
     ]
@@ -636,9 +658,8 @@ def _handle_voice(user_id: str, answer: str) -> list[str] | None:
         return None
 
 
-def _make_cache_key(user_id: str, query: str, document_id: str | None, style: str) -> str:
+def _make_cache_key(user_id: str, query: str, doc_part: str, style: str) -> str:
     h = hashlib.sha256(query.lower().strip().encode()).hexdigest()
-    doc_part = document_id or "none"
     return f"cache:{user_id}:{doc_part}:{style}:{h}"
 
 

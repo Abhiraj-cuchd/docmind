@@ -126,9 +126,11 @@ def save_assistant_message(
     chunks_for_storage = [
         {
             "id":          chunk.get("id"),
+            "document_id": chunk.get("document_id"),
             "content":     chunk.get("content"),
             "page_number": chunk.get("metadata", {}).get("page_number"),
             "filename":    chunk.get("metadata", {}).get("filename"),
+            "section":     chunk.get("metadata", {}).get("section"),
             "rrf_score":   chunk.get("rrf_score"),
         }
         for chunk in (retrieved_chunks or [])

@@ -9,16 +9,18 @@ export default function DashboardPage() {
   const router = useRouter();
   const { setSelection } = useConversationSelection();
 
-  const handleSelectDocument = useCallback((documentId: string) => {
-    setSelection({ conversationId: null, documentId });
+  const handleSelectDocument = useCallback((documentIds: string[]) => {
+    setSelection({
+      conversationId: null,
+      documentId: documentIds[0] ?? null,
+      documentIds
+    });
     router.push('/chat');
   }, [router, setSelection]);
 
   return (
     <DocumentSelectionScreen
-      onSelect={(documentId) => {
-        void handleSelectDocument(documentId);
-      }}
+      onSelect={(documentIds) => void handleSelectDocument(documentIds)}
     />
   );
 }

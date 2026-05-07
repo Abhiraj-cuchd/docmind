@@ -16,25 +16,25 @@ export function VoiceToggle({ enabled, onToggle, credits }: VoiceToggleProps) {
       <Tooltip>
         <TooltipTrigger asChild>
           <div
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-full border transition-colors ${
+            className={`flex h-10 items-center gap-2 rounded-xl border px-3 transition-colors ${
               enabled
-                ? 'bg-primary/15 border-primary/30 text-primary'
-                : 'bg-muted/40 border-border/60 text-muted-foreground'
+                ? 'border-blue-400/30 bg-blue-500/15 text-blue-100'
+                : 'border-white/8 bg-[#07101d] text-white/75'
             }`}
           >
             <Microphone
-              className="size-4"
+              className="size-4 shrink-0"
               weight={enabled ? 'fill' : 'regular'}
             />
-            <span className="text-xs font-semibold tracking-wide">Voice mode</span>
+            <span className="whitespace-nowrap text-xs font-semibold">Voice mode</span>
             <Switch
               id="voice-toggle"
               checked={enabled}
               onCheckedChange={onToggle}
-              className="scale-100"
+              className="scale-95 data-checked:bg-blue-500"
             />
             {credits !== undefined && credits > 0 && (
-              <span className="flex items-center gap-1 text-xs">
+              <span className="flex items-center gap-1 text-xs text-white/70">
                 <Coin className="size-3" />
                 {credits}
               </span>
