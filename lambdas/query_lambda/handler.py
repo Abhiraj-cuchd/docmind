@@ -247,14 +247,24 @@ def _process_record(record: dict) -> None:
             print(f"[Handler] Structured query: type={q_type} value={q_value!r}")
 
             if q_type == "page":
-                candidates = _get_chunks_by_page(user_id, q_value, document_id)
+                candidates = _get_chunks_by_page(
+                    user_id,
+                    q_value,
+                    document_id,
+                    document_ids or None,
+                )
                 not_found_msg = (
                     f"Page {q_value} does not appear to have any extractable "
                     f"text content in your document. It may be an image-only "
                     f"page, or the document has fewer than {q_value} pages."
                 )
             else:  # section
-                candidates = _get_chunks_by_section(user_id, q_value, document_id)
+                candidates = _get_chunks_by_section(
+                    user_id,
+                    q_value,
+                    document_id,
+                    document_ids or None,
+                )
                 not_found_msg = (
                     f"No section matching '{q_value}' was found in your document."
                 )
@@ -739,16 +749,17 @@ def _get_chunks_by_page(
     user_id:     str,
     page_number: int,
     document_id: str | None,
+    document_ids: list[str] | None = None,
 ) -> list[dict]:
-    result = supabase.schema("rag").rpc(
-        "get_chunks_by_page",
-        {
-            "target_user_id": user_id,
-            "target_page":    page_number,
-            "match_count":    20,
-            "target_doc_id":  document_id,
-        }
-    ).execute()
+    params = {
+        "target_user_id": user_id,
+        "target_page":    page_number,
+        "match_count":    20,
+        "target_doc_id":  document_id,
+    }
+    if document_ids:
+        params["target_doc_ids"] = document_ids
+    result = supabase.schema("rag").rpc("get_chunks_by_page", params).execute()
     return result.data or []
 
 
@@ -756,16 +767,17 @@ def _get_chunks_by_section(
     user_id:         str,
     heading_pattern: str,
     document_id:     str | None,
+    document_ids:    list[str] | None = None,
 ) -> list[dict]:
-    result = supabase.schema("rag").rpc(
-        "get_chunks_by_section",
-        {
-            "target_user_id":  user_id,
-            "heading_pattern": heading_pattern,
-            "target_doc_id":   document_id,
-            "match_count":     20,
-        }
-    ).execute()
+    params = {
+        "target_user_id":  user_id,
+        "heading_pattern": heading_pattern,
+        "target_doc_id":   document_id,
+        "match_count":     20,
+    }
+    if document_ids:
+        params["target_doc_ids"] = document_ids
+    result = supabase.schema("rag").rpc("get_chunks_by_section", params).execute()
     return result.data or []
 
 

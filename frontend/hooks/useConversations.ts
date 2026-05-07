@@ -23,9 +23,15 @@ export function useConversations(): UseConversationsReturn {
   const fetchConversations = useCallback(async () => {
     try {
       const data = await supabaseFetch<Conversation[]>(
-        'conversations?order=updated_at.desc'
+        'conversations?select=*,conversation_documents(document_id)&order=updated_at.desc'
       );
-      setConversations(data);
+      const mapped = data.map((conv: any) => ({
+        ...conv,
+        documentIds: (conv.conversation_documents ?? []).map(
+          (cd: { document_id: string }) => cd.document_id
+        ),
+      }));
+      setConversations(mapped);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load conversations');

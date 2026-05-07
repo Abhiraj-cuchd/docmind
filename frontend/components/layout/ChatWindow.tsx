@@ -141,6 +141,7 @@ function ChatWindowInner({
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
   const [responseStyle, setResponseStyle] = useState<ResponseStyle>('explanatory');
   const bottomRef = useRef<HTMLDivElement>(null);
+  const hasDoc = !!documentId || (documentIds && documentIds.length > 0);
 
   // Auto-scroll on new messages
   useEffect(() => {
@@ -167,7 +168,7 @@ function ChatWindowInner({
     let convId = conversationId;
 
     if (!convId) {
-      if (!documentId || !createConversation) {
+      if (!hasDoc || !createConversation) {
         toast.error('Select a document to start chatting');
         return;
       }
@@ -329,9 +330,9 @@ function ChatWindowInner({
         onSubmit={handleSubmit}
         onAbort={abort}
         isLoading={isLoading || isPolling}
-        disabled={!conversationId && !documentId}
+        disabled={!conversationId && !hasDoc}
         placeholder={
-          !conversationId && !documentId
+          !conversationId && !hasDoc
             ? 'Select a document to start chatting…'
             : !conversationId
               ? 'Ask a question to start this conversation…'

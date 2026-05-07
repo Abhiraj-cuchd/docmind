@@ -130,3 +130,275 @@ When `document_ids` is empty and `document_id` is set, the cache key `doc_part =
 | 5 | Low      | None   | Auto-fixed when Bug 1 is resolved |
 
 Start with Bug 1 and Bug 2 — they affect every multi-doc query. Bug 3 and 4 are correctness issues in narrower paths.
+
+---
+
+## Implementation Task List
+
+### Task 1 — Fix `fetchConversations` to join `conversation_documents` (Bug 1)
+
+**File:** `frontend/hooks/useConversations.ts`
+
+**Step 1.1** — Change the fetch URL at line 25:
+
+```ts
+// Before
+'conversations?order=updated_at.desc'
+
+// After
+'conversations?select=*,conversation_documents(document_id)&order=updated_at.desc'
+```
+
+**Step 1.2** — Map the nested PostgREST join result into `documentIds` before calling `setConversations`. PostgREST returns the nested rows as `conversation_documents: { document_id: string }[]` on each object:
+
+```ts
+const mapped = data.map((conv: any) => ({
+  ...conv,
+  documentIds: (conv.conversation_documents ?? []).map(
+    (cd: { document_id: string }) => cd.document_id
+  ),
+}));
+setConversations(mapped);
+```
+
+**Step 1.3** — No type change needed. `Conversation` in `frontend/lib/types.ts:6` already has `documentIds?: string[]`.
+
+**Step 1.4** — No change needed in `layout.tsx:57–58`. Once `documentIds` is populated, the existing fallback logic resolves correctly.
+
+---
+
+### Task 2 — Fix `handleSubmit` guard and `disabled` prop in `ChatWindow` (Bug 2)
+
+**File:** `frontend/components/layout/ChatWindow.tsx`
+
+**Step 2.1** — Fix the guard clause at line 170:
+
+```ts
+// Before
+if (!documentId || !createConversation) {
+
+// After
+const hasDoc = !!documentId || (documentIds && documentIds.length > 0);
+if (!hasDoc || !createConversation) {
+```
+
+**Step 2.2** — Fix the `disabled` prop on `ChatInput` at line 332:
+
+```tsx
+// Before
+disabled={!conversationId && !documentId}
+
+// After
+disabled={!conversationId && !documentId && !(documentIds && documentIds.length > 0)}
+```
+
+**Step 2.3** — Fix the `placeholder` fallback at lines 333–338 to match:
+
+```tsx
+// Before
+!conversationId && !documentId
+  ? 'Select a document to start chatting…'
+
+// After
+!conversationId && !documentId && !(documentIds && documentIds.length > 0)
+  ? 'Select a document to start chatting…'
+```
+
+---
+
+### Task 3 — Extend structured query path to support multiple documents (Bug 3)
+
+Requires a SQL migration and a Python update.
+
+**Step 3.1 — New SQL migration** `sql/013_multi_doc_structured_queries.sql`:
+
+The existing `get_chunks_by_page` (`sql/010_page_query_function.sql:15`) and `get_chunks_by_section` (`sql/011_section_query_and_partial_status.sql:21`) each accept a single `target_doc_id UUID DEFAULT NULL`. Add a `target_doc_ids UUID[] DEFAULT NULL` parameter with precedence over the single-ID parameter:
+
+```sql
+CREATE OR REPLACE FUNCTION rag.get_chunks_by_page(
+    target_user_id  UUID,
+    target_page     INT,
+    match_count     INT    DEFAULT 20,
+    target_doc_id   UUID   DEFAULT NULL,
+    target_doc_ids  UUID[] DEFAULT NULL
+)
+RETURNS TABLE (id UUID, content TEXT, metadata JSONB, rrf_score FLOAT, embedding VECTOR(1024))
+LANGUAGE SQL STABLE AS $$
+    SELECT id, content, metadata, 0.5::FLOAT AS rrf_score, embedding
+    FROM rag.chunks
+    WHERE user_id = target_user_id
+      AND (
+        CASE
+          WHEN target_doc_ids IS NOT NULL THEN document_id = ANY(target_doc_ids)
+          WHEN target_doc_id  IS NOT NULL THEN document_id = target_doc_id
+          ELSE TRUE
+        END
+      )
+      AND (
+        metadata->'pages' @> to_jsonb(target_page)
+        OR (metadata->'pages' IS NULL AND (metadata->>'page_number')::int = target_page)
+      )
+    ORDER BY (metadata->>'chunk_index')::int ASC
+    LIMIT match_count;
+$$;
+
+CREATE OR REPLACE FUNCTION rag.get_chunks_by_section(
+    target_user_id  UUID,
+    heading_pattern TEXT,
+    target_doc_id   UUID   DEFAULT NULL,
+    match_count     INT    DEFAULT 20,
+    target_doc_ids  UUID[] DEFAULT NULL
+)
+RETURNS TABLE (id UUID, content TEXT, metadata JSONB, rrf_score FLOAT, embedding VECTOR(1024))
+LANGUAGE SQL STABLE AS $$
+    SELECT id, content, metadata, 0.5::FLOAT AS rrf_score, embedding
+    FROM rag.chunks
+    WHERE user_id = target_user_id
+      AND (
+        CASE
+          WHEN target_doc_ids IS NOT NULL THEN document_id = ANY(target_doc_ids)
+          WHEN target_doc_id  IS NOT NULL THEN document_id = target_doc_id
+          ELSE TRUE
+        END
+      )
+      AND metadata->>'heading' ILIKE '%' || heading_pattern || '%'
+    ORDER BY (metadata->>'chunk_index')::int ASC
+    LIMIT match_count;
+$$;
+```
+
+**Step 3.2 — Update `_get_chunks_by_page` at `handler.py:738`:**
+
+```python
+def _get_chunks_by_page(
+    user_id:      str,
+    page_number:  int,
+    document_id:  str | None,
+    document_ids: list[str] | None = None,
+) -> list[dict]:
+    params = {
+        "target_user_id": user_id,
+        "target_page":    page_number,
+        "match_count":    20,
+        "target_doc_id":  document_id,
+    }
+    if document_ids:
+        params["target_doc_ids"] = document_ids
+    result = supabase.schema("rag").rpc("get_chunks_by_page", params).execute()
+    return result.data or []
+```
+
+**Step 3.3 — Update `_get_chunks_by_section` at `handler.py:755`:**
+
+```python
+def _get_chunks_by_section(
+    user_id:         str,
+    heading_pattern: str,
+    document_id:     str | None,
+    document_ids:    list[str] | None = None,
+) -> list[dict]:
+    params = {
+        "target_user_id":  user_id,
+        "heading_pattern": heading_pattern,
+        "target_doc_id":   document_id,
+        "match_count":     20,
+    }
+    if document_ids:
+        params["target_doc_ids"] = document_ids
+    result = supabase.schema("rag").rpc("get_chunks_by_section", params).execute()
+    return result.data or []
+```
+
+**Step 3.4 — Update the call sites at `handler.py:250` and `handler.py:257`:**
+
+```python
+# line 250 — before
+candidates = _get_chunks_by_page(user_id, q_value, document_id)
+# after
+candidates = _get_chunks_by_page(user_id, q_value, document_id, document_ids or None)
+
+# line 257 — before
+candidates = _get_chunks_by_section(user_id, q_value, document_id)
+# after
+candidates = _get_chunks_by_section(user_id, q_value, document_id, document_ids or None)
+```
+
+---
+
+### Task 4 — Add `embedding` to `hybrid_search_multi_doc` return (Bug 4)
+
+**Step 4.1 — New SQL migration** `sql/014_multi_doc_embedding_return.sql`:
+
+The current function at `sql/012_multi_doc.sql:31` omits `embedding` from `RETURNS TABLE` and both CTEs. The `vr` and `kr` CTEs already query `rag.chunks` which has the column:
+
+```sql
+CREATE OR REPLACE FUNCTION rag.hybrid_search_multi_doc(
+  query_embedding  VECTOR(1024),
+  query_text       TEXT,
+  target_user_id   UUID,
+  doc_ids          UUID[],
+  match_count      INT DEFAULT 10
+)
+RETURNS TABLE (
+  id          UUID,
+  content     TEXT,
+  metadata    JSONB,
+  document_id UUID,
+  rrf_score   FLOAT,
+  embedding   VECTOR(1024)
+)
+LANGUAGE sql STABLE
+SECURITY INVOKER
+AS $$
+  WITH vr AS (
+    SELECT id, content, metadata, document_id, embedding,
+           ROW_NUMBER() OVER (ORDER BY embedding <=> query_embedding) AS rank
+    FROM   rag.chunks
+    WHERE  user_id     = target_user_id
+      AND  document_id = ANY(doc_ids)
+    ORDER BY embedding <=> query_embedding
+    LIMIT 20
+  ),
+  kr AS (
+    SELECT id, content, metadata, document_id, embedding,
+           ROW_NUMBER() OVER (
+             ORDER BY ts_rank(fts, plainto_tsquery('english', query_text)) DESC
+           ) AS rank
+    FROM   rag.chunks
+    WHERE  user_id     = target_user_id
+      AND  document_id = ANY(doc_ids)
+      AND  fts @@ plainto_tsquery('english', query_text)
+    ORDER BY ts_rank(fts, plainto_tsquery('english', query_text)) DESC
+    LIMIT 20
+  )
+  SELECT
+    COALESCE(vr.id,          kr.id)         AS id,
+    COALESCE(vr.content,     kr.content)    AS content,
+    COALESCE(vr.metadata,    kr.metadata)   AS metadata,
+    COALESCE(vr.document_id, kr.document_id) AS document_id,
+    (COALESCE(1.0 / (60 + vr.rank), 0) +
+     COALESCE(1.0 / (60 + kr.rank), 0))    AS rrf_score,
+    COALESCE(vr.embedding,   kr.embedding)  AS embedding
+  FROM vr FULL OUTER JOIN kr ON vr.id = kr.id
+  ORDER BY rrf_score DESC
+  LIMIT match_count;
+$$;
+
+GRANT EXECUTE ON FUNCTION rag.hybrid_search_multi_doc TO service_role;
+```
+
+No Python changes needed — `mmr_rerank` already reads `chunk.get("embedding")` at `mmr.py:77` and will use it once the column is returned.
+
+---
+
+### Execution Order
+
+| Step | File(s) | Type | Prerequisite |
+|------|---------|------|-------------|
+| Task 1 | `useConversations.ts` | Frontend | None |
+| Task 2 | `ChatWindow.tsx` | Frontend | None |
+| Task 4 SQL | `sql/014_...` | Migration | None |
+| Task 3 SQL | `sql/013_...` | Migration | None |
+| Task 3 Python | `handler.py` | Lambda deploy | Task 3 SQL applied |
+
+Tasks 1, 2, and both SQL migrations can be done in parallel. The Task 3 Python deploy must come after its SQL migration is applied.
