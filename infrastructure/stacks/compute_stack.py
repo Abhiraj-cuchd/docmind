@@ -270,7 +270,8 @@ class ComputeStack(cdk.Stack):
             memory_size=128,
             environment={
                 **common_env,
-                "PDF_BUCKET_NAME": pdf_bucket.bucket_name,
+                "PDF_BUCKET_NAME":   pdf_bucket.bucket_name,
+                "VOICE_BUCKET_NAME": audio_bucket.bucket_name,
             },
         )
 
@@ -280,6 +281,13 @@ class ComputeStack(cdk.Stack):
                 effect=iam.Effect.ALLOW,
                 actions=["s3:DeleteObject"],
                 resources=[f"{pdf_bucket.bucket_arn}/uploads/*"],
+            )
+        )
+        self.delete_function.add_to_role_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=["s3:DeleteObject"],
+                resources=[f"{audio_bucket.bucket_arn}/audio/*"],
             )
         )
 

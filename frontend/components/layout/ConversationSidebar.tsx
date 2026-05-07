@@ -153,7 +153,7 @@ export function ConversationSidebar({
                   ) : (
                     <button
                       onClick={(e) => handleDeleteClick(e, conv.id)}
-                      className="opacity-0 group-hover:opacity-100 p-1.5 mr-1.5 rounded-md text-muted-foreground/60 hover:text-destructive hover:bg-destructive/10 transition-all shrink-0"
+                      className="p-1.5 mr-1.5 rounded-md text-muted-foreground/30 hover:text-destructive hover:bg-destructive/10 transition-all shrink-0"
                       title="Delete conversation"
                     >
                       <Trash className="size-3" />

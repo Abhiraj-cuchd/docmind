@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { supabaseFetch } from '@/lib/supabase';
+import { supabaseFetch, getAccessToken } from '@/lib/supabase';
 import { Document } from '@/lib/types';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -16,6 +16,7 @@ interface UseDocumentsReturn {
     filename: string;
     userId: string;
   }) => Promise<Document | null>;
+  deleteDocument: (id: string) => Promise<boolean>;
   refresh: () => void;
 }
 
@@ -102,11 +103,27 @@ export function useDocuments(): UseDocumentsReturn {
     }
   }, [startPolling]);
 
+  const deleteDocument = useCallback(async (id: string): Promise<boolean> => {
+    const token = await getAccessToken();
+    if (!token) return false;
+
+    const res = await fetch(`/api/documents/${id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (!res.ok) return false;
+
+    setDocuments(prev => prev.filter(d => d.id !== id));
+    return true;
+  }, []);
+
   return {
     documents,
     loading,
     error,
     createDocument,
+    deleteDocument,
     refresh: fetchDocuments,
   };
 }

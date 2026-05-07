@@ -106,6 +106,12 @@ class ApiStack(cdk.Stack):
             integration=delete_integration,
         )
 
+        self.api.add_routes(
+            path="/conversations/{conversationId}",
+            methods=[apigw.HttpMethod.DELETE],
+            integration=delete_integration,
+        )
+
         # ── Throttling via L1 CfnStage ────────────────────────────
         # CONCEPT: HttpApi (L2) doesn't expose throttling directly.
         # We reach down to the underlying CloudFormation resource

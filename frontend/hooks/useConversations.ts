@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { supabaseFetch } from '@/lib/supabase';
+import { supabaseFetch, getAccessToken } from '@/lib/supabase';
 import { Conversation } from '@/lib/types';
 import { v4 as uuidv4 } from 'uuid';
 import { supabase } from '@/lib/supabase';
@@ -74,7 +74,15 @@ export function useConversations(): UseConversationsReturn {
     const previous = conversations;
     setConversations(prev => prev.filter(c => c.id !== id));
     try {
-      await supabaseFetch(`conversations?id=eq.${id}`, { method: 'DELETE' });
+      const token = await getAccessToken();
+      if (!token) throw new Error('Not authenticated');
+
+      const res = await fetch(`/api/conversations/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
       return true;
     } catch (err) {
       console.error('Failed to delete conversation:', err);

@@ -10,7 +10,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 export default function UploadPage() {
-  const { documents, loading, refresh } = useDocuments();
+  const { documents, loading, refresh, deleteDocument } = useDocuments();
   const router = useRouter();
 
   const handleUploadComplete = () => {
@@ -80,7 +80,7 @@ export default function UploadPage() {
           ) : (
             <div className="space-y-2">
               {documents.map(doc => (
-                <DocumentCard key={doc.id} document={doc} />
+                <DocumentCard key={doc.id} document={doc} onDelete={deleteDocument} />
               ))}
             </div>
           )}

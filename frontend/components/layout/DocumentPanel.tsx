@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import {
   FileText, Upload, AlertCircle,
   CheckCircle, Loader2,
-  ExternalLink, RefreshCw, ArrowLeft, X, Trash2, Check
+  ExternalLink, RefreshCw, ArrowLeft, X, Trash2
 } from 'lucide-react'
 import type { Source } from '@/lib/types'
 import { Button } from '@/components/ui/button'
@@ -16,6 +16,14 @@ import {
   TooltipProvider,
   TooltipTrigger
 } from '@/components/ui/tooltip'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { toast } from 'sonner'
 
 // ─────────────────────────────────────────────────────────────────────
@@ -89,48 +97,33 @@ function StatusBadge({ status }: { status: Document['status'] }) {
 interface DocumentCardProps {
   document: Document
   isActive: boolean
+  isDeleting: boolean
   onSelect: () => void
-  onDelete: (id: string) => Promise<void>
+  onDeleteRequest: (doc: Document) => void
 }
 
-function DocumentCard({ document, isActive, onSelect, onDelete }: DocumentCardProps) {
+function DocumentCard({ document, isActive, isDeleting, onSelect, onDeleteRequest }: DocumentCardProps) {
   const totalPages   = document.doc_metadata?.total_pages
   const fileSize     = document.doc_metadata?.file_size_bytes
   const skippedCount = document.skipped_pages?.length ?? 0
   const isReady      = document.status === 'ready' || document.status === 'partial'
   const isProcessing = ['processing', 'indexing'].includes(document.status)
 
-  const [confirming, setConfirming] = useState(false)
-  const [deleting, setDeleting]     = useState(false)
-
   const handleDeleteClick = (e: React.MouseEvent) => {
     e.stopPropagation()
-    setConfirming(true)
-  }
-
-  const handleConfirm = async (e: React.MouseEvent) => {
-    e.stopPropagation()
-    setConfirming(false)
-    setDeleting(true)
-    await onDelete(document.id)
-    setDeleting(false)
-  }
-
-  const handleCancel = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    setConfirming(false)
+    onDeleteRequest(document)
   }
 
   return (
     <div
       className={`
-        group flex flex-col gap-2 p-3 rounded-lg border cursor-pointer
+        flex flex-col gap-2 p-3 rounded-lg border cursor-pointer
         transition-all duration-150
         ${isActive
           ? 'border-blue-500/50 bg-blue-500/10'
           : 'border-zinc-700/50 bg-zinc-800/30 hover:border-zinc-600 hover:bg-zinc-800/60'
         }
-        ${deleting ? 'opacity-50 pointer-events-none' : ''}
+        ${isDeleting ? 'opacity-50 pointer-events-none' : ''}
       `}
       onClick={onSelect}
     >
@@ -151,29 +144,13 @@ function DocumentCard({ document, isActive, onSelect, onDelete }: DocumentCardPr
         <div className="flex items-center gap-1.5 shrink-0">
           <StatusBadge status={document.status} />
 
-          {/* Delete controls — hidden while processing */}
           {!isProcessing && (
-            confirming ? (
-              <div className="flex items-center gap-0.5">
-                <button
-                  onClick={handleConfirm}
-                  className="p-1 rounded text-red-400 hover:bg-red-500/10 transition-colors"
-                  title="Confirm delete"
-                >
-                  <Check className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={handleCancel}
-                  className="p-1 rounded text-zinc-500 hover:bg-zinc-700/50 transition-colors"
-                  title="Cancel"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
+            isDeleting ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-zinc-500" />
             ) : (
               <button
                 onClick={handleDeleteClick}
-                className="opacity-0 group-hover:opacity-100 p-1 rounded text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-all"
+                className="p-1 rounded text-zinc-600/50 hover:text-red-400 hover:bg-red-500/10 transition-all"
                 title="Delete document"
               >
                 <Trash2 className="w-3.5 h-3.5" />
@@ -235,6 +212,10 @@ export default function DocumentPanel({
   const [documents, setDocuments]     = useState<Document[]>([])
   const [loading, setLoading]         = useState(true)
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date())
+
+  // Delete confirmation modal state
+  const [deleteTarget, setDeleteTarget] = useState<Document | null>(null)
+  const [deleting, setDeleting]         = useState(false)
 
   // Preview state
   const [previewDoc, setPreviewDoc]   = useState<Document | null>(null)
@@ -338,10 +319,13 @@ export default function DocumentPanel({
     }
   }, [onDocumentSelect])
 
-  const handleDeleteDocument = useCallback(async (docId: string) => {
+  const handleConfirmDelete = useCallback(async () => {
+    if (!deleteTarget) return
+    const docId = deleteTarget.id
+    setDeleting(true)
     try {
       const { data: { session } } = await supabase.auth.getSession()
-      if (!session) { toast.error('Not authenticated'); return }
+      if (!session) { toast.error('Not authenticated'); setDeleting(false); return }
 
       const res = await fetch(`/api/documents/${docId}`, {
         method: 'DELETE',
@@ -351,6 +335,7 @@ export default function DocumentPanel({
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
         toast.error(err.error || 'Failed to delete document')
+        setDeleting(false)
         return
       }
 
@@ -358,10 +343,13 @@ export default function DocumentPanel({
       if (previewDoc?.id === docId) setPreviewDoc(null)
       onDocumentDeleted?.(docId)
       toast.success('Document deleted')
+      setDeleteTarget(null)
     } catch {
       toast.error('Failed to delete document')
+    } finally {
+      setDeleting(false)
     }
-  }, [supabase, previewDoc, onDocumentDeleted])
+  }, [deleteTarget, supabase, previewDoc, onDocumentDeleted])
 
   const iframeSrc = useMemo(() => {
     if (!pdfUrl) return null
@@ -537,8 +525,9 @@ export default function DocumentPanel({
                 key={doc.id}
                 document={doc}
                 isActive={activeDocumentId === doc.id}
+                isDeleting={deleting && deleteTarget?.id === doc.id}
                 onSelect={() => handleSelect(doc)}
-                onDelete={handleDeleteDocument}
+                onDeleteRequest={setDeleteTarget}
               />
             ))}
           </div>
@@ -555,6 +544,52 @@ export default function DocumentPanel({
           })}
         </p>
       </div>
+
+      {/* Delete confirmation modal */}
+      <Dialog open={!!deleteTarget} onOpenChange={open => { if (!open && !deleting) setDeleteTarget(null) }}>
+        <DialogContent className="max-w-sm bg-zinc-900 border-zinc-700 text-zinc-100">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-zinc-100">
+              <Trash2 className="w-4 h-4 text-red-400" />
+              Delete Document
+            </DialogTitle>
+            <DialogDescription className="text-zinc-400 text-sm leading-relaxed">
+              <span className="font-medium text-zinc-200 block truncate mb-2">
+                {deleteTarget?.filename}
+              </span>
+              This will permanently delete the document and{' '}
+              <span className="text-red-400 font-medium">all conversations</span>{' '}
+              associated with it. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setDeleteTarget(null)}
+              disabled={deleting}
+              className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleConfirmDelete}
+              disabled={deleting}
+              className="bg-red-600 hover:bg-red-700 text-white border-0"
+            >
+              {deleting ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                  Deleting...
+                </>
+              ) : (
+                'Delete'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

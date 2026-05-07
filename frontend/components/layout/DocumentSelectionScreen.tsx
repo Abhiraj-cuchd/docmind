@@ -6,9 +6,17 @@ import { useMemo, useState } from 'react'
 import { Document } from '@/lib/types'
 import {
   FileText, Upload, CheckCircle, AlertCircle,
-  Loader2, Hash, ArrowRight, RefreshCw, User, ChevronDown
+  Loader2, Hash, ArrowRight, RefreshCw, User, ChevronDown, Trash2
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 
@@ -45,73 +53,91 @@ function StatusIcon({ status }: { status: StatusKey }) {
 function DocumentGridCard({
   doc,
   onClick,
+  onDeleteRequest,
   index,
 }: {
   doc: Document
   onClick: () => void
+  onDeleteRequest: (doc: Document) => void
   index: number
 }) {
   const isReady = doc.status === 'ready' || doc.status === 'partial'
   const { label, color, iconClass } = STATUS_CONFIG[doc.status]
 
   return (
-    <button
-      onClick={isReady ? onClick : undefined}
-      disabled={!isReady}
+    <div
       style={{ animationDelay: `${index * 55}ms` }}
       className={cn(
         'group relative flex flex-col gap-3 p-5 rounded-2xl border text-left w-full',
         'animate-in fade-in-0 slide-in-from-bottom-3 duration-300 fill-mode-both',
         isReady
           ? [
-              'border-border bg-card cursor-pointer',
+              'border-border bg-card',
               'hover:border-primary/50 hover:bg-primary/[0.04]',
               'hover:-translate-y-1 hover:shadow-xl hover:shadow-primary/10',
               'transition-all duration-200',
             ]
-          : 'border-border/40 bg-card/40 cursor-not-allowed opacity-55'
+          : 'border-border/40 bg-card/40 opacity-55'
       )}
     >
-      {/* Icon block */}
-      <div className="flex items-start justify-between">
-        <div className="w-11 h-11 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center shrink-0">
-          <FileText className="w-5 h-5 text-red-400" />
+      {/* Clickable area */}
+      <button
+        onClick={isReady ? onClick : undefined}
+        disabled={!isReady}
+        className={cn('flex flex-col gap-3 text-left w-full', isReady ? 'cursor-pointer' : 'cursor-not-allowed')}
+      >
+        {/* Icon row — file icon left, actions right */}
+        <div className="flex items-start justify-between">
+          <div className="w-11 h-11 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center shrink-0">
+            <FileText className="w-5 h-5 text-red-400" />
+          </div>
+
+          {/* Action buttons — adjacent, visible on hover */}
+          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+            <button
+              onClick={e => { e.stopPropagation(); onDeleteRequest(doc) }}
+              className="p-1.5 rounded-lg text-muted-foreground/60 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+              title="Delete document"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+            {isReady && (
+              <div className="p-1.5 text-primary">
+                <ArrowRight className="w-3.5 h-3.5" />
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Arrow appears on hover for ready docs */}
-        {isReady && (
-          <ArrowRight className="w-4 h-4 text-primary opacity-0 group-hover:opacity-100 transition-opacity duration-150 mt-1 shrink-0" />
-        )}
-      </div>
+        {/* Filename + date */}
+        <div className="flex-1 min-w-0 space-y-0.5">
+          <p
+            className="text-sm font-semibold text-foreground leading-snug line-clamp-2"
+            title={doc.filename}
+          >
+            {doc.filename}
+          </p>
+          <p className="text-xs text-muted-foreground">{formatDate(doc.created_at)}</p>
+        </div>
 
-      {/* Filename + date */}
-      <div className="flex-1 min-w-0 space-y-0.5">
-        <p
-          className="text-sm font-semibold text-foreground leading-snug line-clamp-2"
-          title={doc.filename}
-        >
-          {doc.filename}
-        </p>
-        <p className="text-xs text-muted-foreground">{formatDate(doc.created_at)}</p>
-      </div>
-
-      {/* Footer: status + chunk count */}
-      <div className="flex items-center justify-between gap-2 pt-1 border-t border-border/50">
-        <span className={cn('flex items-center gap-1.5 text-xs font-medium', color)}>
-          <span className={iconClass}>
-            <StatusIcon status={doc.status} />
+        {/* Footer: status + chunk count */}
+        <div className="flex items-center justify-between gap-2 pt-1 border-t border-border/50">
+          <span className={cn('flex items-center gap-1.5 text-xs font-medium', color)}>
+            <span className={iconClass}>
+              <StatusIcon status={doc.status} />
+            </span>
+            {label}
           </span>
-          {label}
-        </span>
 
-        {doc.chunk_count !== undefined && isReady && (
-          <span className="flex items-center gap-1 text-xs text-muted-foreground">
-            <Hash className="w-3 h-3" />
-            {doc.chunk_count.toLocaleString()} chunks
-          </span>
-        )}
-      </div>
-    </button>
+          {doc.chunk_count !== undefined && isReady && (
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Hash className="w-3 h-3" />
+              {doc.chunk_count.toLocaleString()} chunks
+            </span>
+          )}
+        </div>
+      </button>
+    </div>
   )
 }
 
@@ -134,10 +160,20 @@ function SkeletonCard({ index }: { index: number }) {
 }
 
 export function DocumentSelectionScreen({ onSelect }: Props) {
-  const { documents, loading, refresh } = useDocuments()
+  const { documents, loading, refresh, deleteDocument } = useDocuments()
   const { user } = useAuth()
   const [agentOpen, setAgentOpen] = useState(false)
   const [agentValue, setAgentValue] = useState('rag')
+  const [deleteTarget, setDeleteTarget] = useState<Document | null>(null)
+  const [deleting, setDeleting] = useState(false)
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
+    await deleteDocument(deleteTarget.id)
+    setDeleting(false)
+    setDeleteTarget(null)
+  }
   const agentOptions = useMemo(() => (
     [
       { value: 'rag', label: 'RAG Agent' },
@@ -300,11 +336,57 @@ export function DocumentSelectionScreen({ onSelect }: Props) {
                 doc={doc}
                 index={i}
                 onClick={() => onSelect(doc.id, doc.filename)}
+                onDeleteRequest={setDeleteTarget}
               />
             ))}
           </div>
         )}
       </main>
+
+      {/* Delete confirmation modal */}
+      <Dialog open={!!deleteTarget} onOpenChange={open => { if (!deleting) setDeleteTarget(open ? deleteTarget : null) }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trash2 className="w-4 h-4 text-red-400" />
+              Delete Document
+            </DialogTitle>
+            <DialogDescription className="text-sm leading-relaxed">
+              <span className="font-medium text-foreground block truncate mb-2">
+                {deleteTarget?.filename}
+              </span>
+              This will permanently delete the document and{' '}
+              <span className="text-red-400 font-medium">all conversations</span>{' '}
+              associated with it. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setDeleteTarget(null)}
+              disabled={deleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleConfirmDelete}
+              disabled={deleting}
+              className="bg-red-600 hover:bg-red-700 text-white border-0"
+            >
+              {deleting ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                  Deleting…
+                </>
+              ) : (
+                'Delete'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
