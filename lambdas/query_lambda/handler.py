@@ -41,7 +41,8 @@ from shared_lambda.rate_limiter    import (
 from shared_lambda.classifier import get_conversational_response
 from hyde    import generate_hyde_embedding, embed_query
 from mmr     import mmr_rerank
-from sarvam  import needs_retrieval, generate_answer, direct_answer, rewrite_query
+from sarvam  import needs_retrieval, rewrite_query, route_generation_model
+from nvidia  import generate_answer, direct_answer, MODEL_DEEPSEEK, MODEL_KIMI
 from history import (
     fetch_conversation_history,
     save_user_message,
@@ -238,6 +239,9 @@ def _process_record(record: dict) -> None:
             print(f"[Handler] User has documents — skipping router, "
                   f"always retrieving")
 
+        # n_docs is needed by routing and HyDE eligibility — compute once here
+        n_docs = len(document_ids) if document_ids else (1 if document_id else 0)
+
         # ── Step 5: Structured query detection ─────────────────────
         # "What is on page 4?" and "explain the binary search section"
         # are metadata lookups, not semantic queries. Bypassing hybrid
@@ -298,11 +302,15 @@ def _process_record(record: dict) -> None:
                 raise Exception("RATE_LIMIT_WAIT")
             tokens_used += 2
 
+            gen_model = _route_model(r, query, n_docs, tokens_used)
+            tokens_used = gen_model["tokens_used"]
+
             answer = generate_answer(
                 query=query,
                 context_chunks=top_chunks,
                 history=history,
                 style=response_style,
+                model=gen_model["model"],
             )
             _finish(
                 r=r, job_id=job_id, query=query, answer=answer,
@@ -403,7 +411,6 @@ def _process_record(record: dict) -> None:
         # score is structurally lower (less overlap between vector and
         # keyword rankings), so HyDE would fire on virtually every
         # multi-doc query — adding 5–15s latency for little gain.
-        n_docs = len(document_ids) if document_ids else (1 if document_id else 0)
         hyde_eligible = n_docs <= 1
         if top_rrf_score < HYDE_CONFIDENCE_THRESHOLD and hyde_eligible:
             print(f"[Handler] Weak signal — attempting HyDE (RAG bucket)")
@@ -480,9 +487,13 @@ def _process_record(record: dict) -> None:
 
         tokens_used += 2
 
-        # ── Step 13: Generate answer (SARVAM_API_KEY_RAG) ──────────
+        # ── Step 13: Route to generation model ─────────────────────
+        gen_model   = _route_model(r, query, n_docs, tokens_used)
+        tokens_used = gen_model["tokens_used"]
+
         print(f"[Handler] Generating RAG answer "
-              f"(hyde={hyde_triggered}, "
+              f"(model={gen_model['name']}, "
+              f"hyde={hyde_triggered}, "
               f"chunks={len(top_chunks)}, "
               f"history={len(history)})")
 
@@ -491,6 +502,7 @@ def _process_record(record: dict) -> None:
             context_chunks=top_chunks,
             history=history,
             style=response_style,
+            model=gen_model["model"],
         )
 
         # ── Step 14: Finish ────────────────────────────────────────
@@ -819,6 +831,29 @@ def _get_chunks_by_section(
         params["target_doc_ids"] = document_ids
     result = supabase.schema("rag").rpc("get_chunks_by_section", params).execute()
     return result.data or []
+
+
+def _route_model(r, query: str, n_docs: int, tokens_used: int) -> dict:
+    """
+    Asks Sarvam to classify the query and returns the NVIDIA model to use.
+    Costs 1 router token. Falls back to heuristic if tokens unavailable.
+
+    Returns: {"model": str, "name": str, "tokens_used": int}
+    """
+    fallback_name  = "kimi"    if n_docs > 1 else "deepseek"
+    fallback_model = MODEL_KIMI if n_docs > 1 else MODEL_DEEPSEEK
+
+    router_acquired = acquire_router_token(r)
+    if not router_acquired:
+        print(f"[Handler] Router tokens unavailable — "
+              f"heuristic fallback → {fallback_name}")
+        return {"model": fallback_model, "name": fallback_name,
+                "tokens_used": tokens_used}
+
+    tokens_used += 1
+    name = route_generation_model(query, n_docs)
+    model = MODEL_KIMI if name == "kimi" else MODEL_DEEPSEEK
+    return {"model": model, "name": name, "tokens_used": tokens_used}
 
 
 def _split_tts_chunks(text: str, max_chars: int) -> list[str]:
