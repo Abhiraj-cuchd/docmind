@@ -42,7 +42,7 @@ from shared_lambda.classifier import get_conversational_response
 from hyde    import generate_hyde_embedding, embed_query
 from mmr     import mmr_rerank
 from sarvam  import needs_retrieval, rewrite_query, route_generation_model
-from nvidia  import generate_answer, direct_answer, MODEL_DEEPSEEK, MODEL_KIMI
+from nvidia  import generate_answer, direct_answer, MODEL_LLAMA, MODEL_KIMI
 from history import (
     fetch_conversation_history,
     save_user_message,
@@ -102,9 +102,16 @@ def _process_record(record: dict) -> None:
     voice_mode      = body.get("voice_mode", False)
     response_style  = body.get("response_style", "explanatory")
     document_ids    = body.get("document_ids", [])
-    if not document_ids:
-        document_ids = _get_conversation_document_ids(conversation_id, user_id)
-    document_id     = _get_conversation_document_id(conversation_id, user_id)
+    # These two Supabase lookups are independent — run them concurrently.
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        ids_future = (
+            ex.submit(_get_conversation_document_ids, conversation_id, user_id)
+            if not document_ids else None
+        )
+        id_future = ex.submit(_get_conversation_document_id, conversation_id, user_id)
+        if ids_future is not None:
+            document_ids = ids_future.result()
+        document_id = id_future.result()
 
     print(f"[Handler] Job {job_id}: '{query[:80]}'")
 
@@ -173,14 +180,21 @@ def _process_record(record: dict) -> None:
 
         # ── Step 2: Save user message ──────────────────────────────
         # ── Step 3: Fetch history (free) ───────────────────────────
-        with ThreadPoolExecutor(max_workers=2) as ex:
-            save_future = ex.submit(save_user_message, conversation_id, user_id, query)
-            history_future = ex.submit(fetch_conversation_history, conversation_id, user_id)
-        history = history_future.result()
-        save_future.result()
+        # Save + history + has-documents are independent Supabase calls.
+        # Run them together, and let the has-documents check resolve while
+        # rewrite_query (Sarvam) runs on the main thread.
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            save_future     = ex.submit(save_user_message, conversation_id, user_id, query)
+            history_future  = ex.submit(fetch_conversation_history, conversation_id, user_id)
+            has_docs_future = ex.submit(_user_has_documents, user_id)
 
-        # Rewrite ambiguous follow-up queries before embedding
-        search_query = rewrite_query(query, history)
+            history = history_future.result()
+            save_future.result()
+
+            # Rewrite ambiguous follow-up queries before embedding.
+            # Runs here while has_docs_future resolves concurrently.
+            search_query  = rewrite_query(query, history)
+            user_has_docs = has_docs_future.result()
 
         # ── Step 4: Smart routing decision ─────────────────────────
         # CONCEPT: Two paths depending on document availability.
@@ -197,8 +211,7 @@ def _process_record(record: dict) -> None:
         #     >= MIN_USEFUL_RRF → proceed with RAG pipeline
         #
         # Saves 1 router token on every query when docs exist.
-        tokens_used   = 0
-        user_has_docs = _user_has_documents(user_id)
+        tokens_used = 0
 
         if not user_has_docs:
             # ── Path A: No documents — use LLM router ──────────────
@@ -302,8 +315,9 @@ def _process_record(record: dict) -> None:
                 raise Exception("RATE_LIMIT_WAIT")
             tokens_used += 2
 
-            gen_model = _route_model(r, query, n_docs, tokens_used)
-            tokens_used = gen_model["tokens_used"]
+            gen_model = _route_model(r, query, n_docs)
+            if gen_model["token_used"]:
+                tokens_used += 1
 
             answer = generate_answer(
                 query=query,
@@ -319,6 +333,17 @@ def _process_record(record: dict) -> None:
                 cache_key=cache_key, tokens_used=tokens_used, path="rag",
             )
             return
+
+        # ── Multi-doc routing, launched in parallel ────────────────
+        # The Sarvam router (~4s) only runs for multi-doc queries. Start it
+        # now so it overlaps embed + hybrid search instead of blocking right
+        # before generation. Single-doc routes instantly via heuristic, so
+        # no thread is needed there.
+        route_executor = None
+        route_future   = None
+        if n_docs > 1:
+            route_executor = ThreadPoolExecutor(max_workers=1)
+            route_future   = route_executor.submit(_route_model, r, query, n_docs)
 
         # ── Step 6: Embed query (free — Voyage AI) ─────────────────
         print(f"[Handler] Embedding query (Voyage — free)")
@@ -349,6 +374,8 @@ def _process_record(record: dict) -> None:
         # ── Step 8: No candidates at all ───────────────────────────
         if not candidates:
             print(f"[Handler] No candidates — direct fallback")
+            if route_executor is not None:
+                route_executor.shutdown(wait=False)
 
             rag_acquired = acquire_generate_tokens(r)
             if not rag_acquired:
@@ -384,6 +411,8 @@ def _process_record(record: dict) -> None:
             print(f"[Handler] RRF {top_rrf_score:.4f} < "
                   f"MIN_USEFUL {MIN_USEFUL_RRF_SCORE} — "
                   f"document not relevant — direct fallback")
+            if route_executor is not None:
+                route_executor.shutdown(wait=False)
 
             rag_acquired = acquire_generate_tokens(r)
             if not rag_acquired:
@@ -487,9 +516,16 @@ def _process_record(record: dict) -> None:
 
         tokens_used += 2
 
-        # ── Step 13: Route to generation model ─────────────────────
-        gen_model   = _route_model(r, query, n_docs, tokens_used)
-        tokens_used = gen_model["tokens_used"]
+        # ── Step 13: Resolve generation model ──────────────────────
+        # Multi-doc routing was launched in parallel with retrieval, so
+        # .result() returns immediately. Single-doc routes here via heuristic.
+        if route_future is not None:
+            gen_model = route_future.result()
+            route_executor.shutdown(wait=False)
+        else:
+            gen_model = _route_model(r, query, n_docs)
+        if gen_model["token_used"]:
+            tokens_used += 1
 
         print(f"[Handler] Generating RAG answer "
               f"(model={gen_model['name']}, "
@@ -833,27 +869,31 @@ def _get_chunks_by_section(
     return result.data or []
 
 
-def _route_model(r, query: str, n_docs: int, tokens_used: int) -> dict:
+def _route_model(r, query: str, n_docs: int) -> dict:
     """
-    Asks Sarvam to classify the query and returns the NVIDIA model to use.
-    Costs 1 router token. Falls back to heuristic if tokens unavailable.
+    Picks the generation model.
 
-    Returns: {"model": str, "name": str, "tokens_used": int}
+    Single doc (or none): no cross-document reasoning is possible, so the
+    answer always goes to Llama. Pure heuristic — no router token, no Sarvam
+    call, zero latency. Covers the majority of queries.
+
+    Multiple docs: ambiguous — "summarise document A" (llama) vs "compare A
+    and B" (kimi). Spend 1 router token to let Sarvam classify. The caller
+    launches this in parallel with retrieval, so its latency is hidden behind
+    embed + hybrid search.
+
+    Returns: {"model": str, "name": str, "token_used": bool}
     """
-    fallback_name  = "kimi"    if n_docs > 1 else "deepseek"
-    fallback_model = MODEL_KIMI if n_docs > 1 else MODEL_DEEPSEEK
+    if n_docs <= 1:
+        return {"model": MODEL_LLAMA, "name": "llama", "token_used": False}
 
-    router_acquired = acquire_router_token(r)
-    if not router_acquired:
-        print(f"[Handler] Router tokens unavailable — "
-              f"heuristic fallback → {fallback_name}")
-        return {"model": fallback_model, "name": fallback_name,
-                "tokens_used": tokens_used}
+    if not acquire_router_token(r):
+        print(f"[Handler] Router token unavailable — heuristic fallback → kimi")
+        return {"model": MODEL_KIMI, "name": "kimi", "token_used": False}
 
-    tokens_used += 1
-    name = route_generation_model(query, n_docs)
-    model = MODEL_KIMI if name == "kimi" else MODEL_DEEPSEEK
-    return {"model": model, "name": name, "tokens_used": tokens_used}
+    name  = route_generation_model(query, n_docs)
+    model = MODEL_KIMI if name == "kimi" else MODEL_LLAMA
+    return {"model": model, "name": name, "token_used": True}
 
 
 def _split_tts_chunks(text: str, max_chars: int) -> list[str]:

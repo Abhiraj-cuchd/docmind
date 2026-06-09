@@ -3,8 +3,8 @@
 # Responsibility: all NVIDIA NIM generation calls.
 # Two models, one shared transport:
 #
-#   DeepSeek V4 Pro  — single-doc Q&A (summarise, extract, explain)
-#   Kimi K2.6        — multi-doc cross-reasoning (compare, gap analysis)
+#   Llama 3.3 70B  — single-doc Q&A (summarise, extract, explain)
+#   Kimi K2.6      — multi-doc cross-reasoning (compare, gap analysis)
 #
 # Model is selected upstream by sarvam.route_generation_model().
 # This file only executes the call.
@@ -16,8 +16,11 @@ from shared_lambda.secrets import get_secret
 
 NVIDIA_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 
-MODEL_DEEPSEEK = "deepseek-ai/deepseek-v4-pro"
-MODEL_KIMI     = "moonshotai/kimi-k2.6"
+MODEL_LLAMA = "meta/llama-3.3-70b-instruct"
+MODEL_KIMI  = "moonshotai/kimi-k2.6"
+
+# Keep MODEL_DEEPSEEK as alias so any existing references don't break
+MODEL_DEEPSEEK = MODEL_LLAMA
 
 MAX_RETRIES  = 3
 RETRY_DELAY  = 2
@@ -247,3 +250,5 @@ def _call_nvidia(
         f"[NVIDIA/{_short(model)}] API failed after {MAX_RETRIES} attempts. "
         f"SQS will retry this message."
     )
+
+

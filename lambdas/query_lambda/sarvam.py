@@ -442,21 +442,21 @@ def route_generation_model(query: str, n_docs: int) -> str:
     """
     Classifies the query and returns the appropriate generation model name.
 
-    Returns one of: "deepseek" | "kimi"
+    Returns one of: "llama" | "kimi"
 
     Routing intent:
-      deepseek — single-document work: summarise, explain, extract, find section
-      kimi     — cross-document reasoning: compare, gap analysis, contradictions,
-                 compliance, research synthesis
+      llama — single-document work: summarise, explain, extract, find section
+      kimi  — cross-document reasoning: compare, gap analysis, contradictions,
+              compliance, research synthesis
 
     When n_docs > 1 we still ask Sarvam because even with multiple docs the
-    query might be "summarise document A" (deepseek) vs "compare A and B" (kimi).
+    query might be "summarise document A" (llama) vs "compare A and B" (kimi).
 
     Falls back to:
-      - "kimi"     when n_docs > 1 and Sarvam fails
-      - "deepseek" when n_docs <= 1 and Sarvam fails
+      - "kimi"  when n_docs > 1 and Sarvam fails
+      - "llama" when n_docs <= 1 and Sarvam fails
     """
-    fallback = "kimi" if n_docs > 1 else "deepseek"
+    fallback = "kimi" if n_docs > 1 else "llama"
     print(f"[Sarvam] Routing generation model for: '{query[:80]}' (n_docs={n_docs})")
 
     prompt = (
@@ -464,7 +464,7 @@ def route_generation_model(query: str, n_docs: int) -> str:
         "should handle it.\n\n"
         "Reply with ONLY the model name — no explanation, no punctuation.\n\n"
         "Models:\n"
-        "  deepseek — single-document tasks: summarise, explain a concept, "
+        "  llama — single-document tasks: summarise, explain a concept, "
         "find a section, extract dates/entities/requirements, list items, "
         "answer a factual question from one document\n"
         "  kimi — cross-document tasks: compare documents, identify contradictions, "
@@ -477,22 +477,27 @@ def route_generation_model(query: str, n_docs: int) -> str:
     try:
         raw = _call_sarvam(
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=10,
+            max_tokens=1024,
             temperature=0.0,
         )
     except Exception as e:
         print(f"[Sarvam] route_generation_model failed: {e} — using fallback '{fallback}'")
         return fallback
 
-    decision = _strip_think_tags(raw).strip().lower()
+    # Sarvam reasons inside <think> tags before outputting the model name.
+    # At low max_tokens the think block is cut off and </think> never appears,
+    # so stripping think tags returns empty string. Instead search the entire
+    # raw response for the last occurrence of either model name — the reasoning
+    # always concludes with the final decision, so the last match is authoritative.
+    raw_lower = raw.lower()
+    kimi_pos  = raw_lower.rfind("kimi")
+    llama_pos = raw_lower.rfind("llama")
 
-    if "kimi" in decision:
-        result = "kimi"
-    elif "deepseek" in decision:
-        result = "deepseek"
-    else:
-        print(f"[Sarvam] Unexpected routing output '{decision}' — using fallback '{fallback}'")
+    if kimi_pos == -1 and llama_pos == -1:
+        print(f"[Sarvam] No model name found in routing output — using fallback '{fallback}'")
         result = fallback
+    else:
+        result = "kimi" if kimi_pos > llama_pos else "llama"
 
     print(f"[Sarvam] Generation model routed → {result}")
     return result
