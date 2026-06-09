@@ -1,13 +1,14 @@
 # lambdas/query_lambda/nvidia.py
 #
-# Responsibility: all NVIDIA NIM generation calls.
-# Two models, one shared transport:
+# Responsibility: all LLM generation calls, dispatched per model to its
+# own provider:
 #
-#   Llama 3.3 70B  — single-doc Q&A (summarise, extract, explain)
-#   Kimi K2.6      — multi-doc cross-reasoning (compare, gap analysis)
+#   Llama 3.3 70B  — single-doc Q&A      → Groq   (fast, free tier)
+#   Kimi K2.6      — multi-doc reasoning → NVIDIA NIM
 #
+# Both providers are OpenAI-compatible, so one transport handles both —
+# only the URL, API key, and model id differ (see _PROVIDERS).
 # Model is selected upstream by sarvam.route_generation_model().
-# This file only executes the call.
 
 import requests
 import time
@@ -15,12 +16,19 @@ import re
 from shared_lambda.secrets import get_secret
 
 NVIDIA_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+GROQ_API_URL   = "https://api.groq.com/openai/v1/chat/completions"
 
-MODEL_LLAMA = "meta/llama-3.3-70b-instruct"
-MODEL_KIMI  = "moonshotai/kimi-k2.6"
+MODEL_LLAMA = "llama-3.3-70b-versatile"   # Groq model id
+MODEL_KIMI  = "moonshotai/kimi-k2.6"      # NVIDIA NIM model id
 
 # Keep MODEL_DEEPSEEK as alias so any existing references don't break
 MODEL_DEEPSEEK = MODEL_LLAMA
+
+# Per-model provider routing. Each model goes to the endpoint that hosts it.
+_PROVIDERS = {
+    MODEL_LLAMA: {"url": GROQ_API_URL,   "secret": "GROQ_API_KEY",   "label": "Groq"},
+    MODEL_KIMI:  {"url": NVIDIA_API_URL, "secret": "NVIDIA_API_KEY", "label": "NVIDIA"},
+}
 
 MAX_RETRIES  = 3
 RETRY_DELAY  = 2
@@ -64,13 +72,13 @@ def generate_answer(
     prompt = _build_rag_prompt(query, context_chunks, history, style)
 
     n_docs = len({c["metadata"].get("filename") for c in context_chunks if c.get("metadata")})
-    print(f"[NVIDIA/{_short(model)}] RAG answer: '{query[:80]}' | "
+    print(f"[{_tag(model)}] RAG answer: '{query[:80]}' | "
           f"{len(context_chunks)} chunks, {n_docs} doc(s)")
 
-    raw    = _call_nvidia(model=model, messages=[{"role": "user", "content": prompt}],
-                          max_tokens=4096, temperature=0.5)
+    raw    = _call_llm(model=model, messages=[{"role": "user", "content": prompt}],
+                       max_tokens=4096, temperature=0.5)
     answer = _strip_think_tags(raw)
-    print(f"[NVIDIA/{_short(model)}] Answer: {len(answer)} chars")
+    print(f"[{_tag(model)}] Answer: {len(answer)} chars")
     return answer
 
 
@@ -80,13 +88,13 @@ def direct_answer(
     style:   str = "explanatory",
     model:   str = MODEL_DEEPSEEK,
 ) -> str:
-    print(f"[NVIDIA/{_short(model)}] Direct answer: '{query[:80]}'")
+    print(f"[{_tag(model)}] Direct answer: '{query[:80]}'")
 
     prompt = _build_direct_prompt(query, history, style)
-    raw    = _call_nvidia(model=model, messages=[{"role": "user", "content": prompt}],
-                          max_tokens=1024, temperature=0.5)
+    raw    = _call_llm(model=model, messages=[{"role": "user", "content": prompt}],
+                       max_tokens=1024, temperature=0.5)
     answer = _strip_think_tags(raw)
-    print(f"[NVIDIA/{_short(model)}] Direct: {len(answer)} chars")
+    print(f"[{_tag(model)}] Direct: {len(answer)} chars")
     return answer
 
 
@@ -184,19 +192,31 @@ def _short(model: str) -> str:
     return model.split("/")[-1]
 
 
-def _call_nvidia(
+def _provider(model: str) -> dict:
+    # Default to the Groq/Llama provider for any unmapped model id.
+    return _PROVIDERS.get(model, _PROVIDERS[MODEL_LLAMA])
+
+
+def _tag(model: str) -> str:
+    return f"{_provider(model)['label']}/{_short(model)}"
+
+
+def _call_llm(
     model:       str,
     messages:    list[dict],
     max_tokens:  int,
     temperature: float,
 ) -> str:
-    api_key     = get_secret("NVIDIA_API_KEY")
+    provider    = _provider(model)
+    url         = provider["url"]
+    api_key     = get_secret(provider["secret"])
+    tag         = _tag(model)
     retry_delay = RETRY_DELAY
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             response = requests.post(
-                NVIDIA_API_URL,
+                url,
                 headers={
                     "Authorization": f"Bearer {api_key}",
                     "Content-Type":  "application/json",
@@ -218,36 +238,36 @@ def _call_nvidia(
 
             elif response.status_code == 429:
                 wait = retry_delay * attempt * 2
-                print(f"[NVIDIA/{_short(model)}] Rate limited. "
+                print(f"[{tag}] Rate limited. "
                       f"Waiting {wait}s (attempt {attempt}/{MAX_RETRIES})")
                 time.sleep(wait)
 
             elif response.status_code >= 500:
-                print(f"[NVIDIA/{_short(model)}] Server error {response.status_code}. "
+                print(f"[{tag}] Server error {response.status_code}. "
                       f"Waiting {retry_delay}s (attempt {attempt}/{MAX_RETRIES})")
                 time.sleep(retry_delay)
                 retry_delay *= 2
 
             else:
                 raise ValueError(
-                    f"[NVIDIA/{_short(model)}] API error {response.status_code}: "
+                    f"[{tag}] API error {response.status_code}: "
                     f"{response.text}"
                 )
 
         except requests.exceptions.Timeout:
-            print(f"[NVIDIA/{_short(model)}] Timeout. "
+            print(f"[{tag}] Timeout. "
                   f"Waiting {retry_delay}s (attempt {attempt}/{MAX_RETRIES})")
             time.sleep(retry_delay)
             retry_delay *= 2
 
         except requests.exceptions.ConnectionError:
-            print(f"[NVIDIA/{_short(model)}] Connection error. "
+            print(f"[{tag}] Connection error. "
                   f"Waiting {retry_delay}s (attempt {attempt}/{MAX_RETRIES})")
             time.sleep(retry_delay)
             retry_delay *= 2
 
     raise Exception(
-        f"[NVIDIA/{_short(model)}] API failed after {MAX_RETRIES} attempts. "
+        f"[{tag}] API failed after {MAX_RETRIES} attempts. "
         f"SQS will retry this message."
     )
 
