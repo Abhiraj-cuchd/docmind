@@ -101,6 +101,8 @@ def _process_record(record: dict) -> None:
     voice_mode      = body.get("voice_mode", False)
     response_style  = body.get("response_style", "explanatory")
     document_ids    = body.get("document_ids", [])
+    if not document_ids:
+        document_ids = _get_conversation_document_ids(conversation_id, user_id)
     document_id     = _get_conversation_document_id(conversation_id, user_id)
 
     print(f"[Handler] Job {job_id}: '{query[:80]}'")
@@ -396,7 +398,14 @@ def _process_record(record: dict) -> None:
         # HyDE threshold (weak signal). Worth spending one HyDE token
         # to generate a better query vector via hypothetical answer.
         # Uses SARVAM_API_KEY_RAG — it's a generation call.
-        if top_rrf_score < HYDE_CONFIDENCE_THRESHOLD:
+        #
+        # Multi-doc skip: with chunks split across N docs the top RRF
+        # score is structurally lower (less overlap between vector and
+        # keyword rankings), so HyDE would fire on virtually every
+        # multi-doc query — adding 5–15s latency for little gain.
+        n_docs = len(document_ids) if document_ids else (1 if document_id else 0)
+        hyde_eligible = n_docs <= 1
+        if top_rrf_score < HYDE_CONFIDENCE_THRESHOLD and hyde_eligible:
             print(f"[Handler] Weak signal — attempting HyDE (RAG bucket)")
 
             hyde_acquired = acquire_hyde_token(r)
@@ -438,14 +447,20 @@ def _process_record(record: dict) -> None:
             else:
                 print(f"[Handler] HyDE token unavailable — proceeding")
         else:
-            print(f"[Handler] Strong signal — HyDE skipped ✅")
+            if not hyde_eligible:
+                print(f"[Handler] Multi-doc query — HyDE skipped to reduce latency ✅")
+            else:
+                print(f"[Handler] Strong signal — HyDE skipped ✅")
 
         # ── Step 11: MMR diversification (free — Python) ───────────
-        print(f"[Handler] Running MMR (top_k={MMR_TOP_K})")
+        # Scale top_k by doc count so each doc has a fair chance of
+        # contributing at least one chunk to the generation context.
+        effective_top_k = MMR_TOP_K if n_docs <= 1 else min(4 * n_docs, 12)
+        print(f"[Handler] Running MMR (top_k={effective_top_k}, n_docs={n_docs})")
         top_chunks = mmr_rerank(
             query_embedding=direct_embedding,
             chunks=candidates,
-            top_k=MMR_TOP_K,
+            top_k=effective_top_k,
             lambda_mult=MMR_LAMBDA,
         )
 
@@ -671,6 +686,31 @@ def _handle_voice(user_id: str, answer: str) -> list[str] | None:
 def _make_cache_key(user_id: str, query: str, doc_part: str, style: str) -> str:
     h = hashlib.sha256(query.lower().strip().encode()).hexdigest()
     return f"cache:{user_id}:{doc_part}:{style}:{h}"
+
+
+def _get_conversation_document_ids(conversation_id: str, user_id: str) -> list[str]:
+    """Read the authoritative doc set from the junction table.
+
+    conversation_documents has no user_id column — isolation is enforced by
+    also verifying the parent conversation belongs to user_id.
+    """
+    try:
+        conv = supabase.schema("rag").table("conversations") \
+            .select("id") \
+            .eq("id", conversation_id) \
+            .eq("user_id", user_id) \
+            .single() \
+            .execute()
+        if not conv.data:
+            return []
+        result = supabase.schema("rag").table("conversation_documents") \
+            .select("document_id") \
+            .eq("conversation_id", conversation_id) \
+            .execute()
+        return [row["document_id"] for row in (result.data or [])]
+    except Exception as e:
+        print(f"[Handler] _get_conversation_document_ids error: {e}")
+        return []
 
 
 def _get_conversation_document_id(conversation_id: str, user_id: str) -> str | None:

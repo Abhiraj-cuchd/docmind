@@ -17,4 +17,7 @@ infrastructure/cdk.out
 __tests__/*
 .codex
 CLAUDE.md
-context.md
+*.png
+.claude
+docs/
+docs/context.md

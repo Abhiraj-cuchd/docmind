@@ -19,7 +19,7 @@ import re
 from shared_lambda.secrets import get_secret
 
 SARVAM_API_URL = "https://api.sarvam.ai/v1/chat/completions"
-SARVAM_MODEL   = "sarvam-m"
+SARVAM_MODEL   = "sarvam-105b"
 
 MAX_RETRIES    = 3
 RETRY_DELAY    = 2
@@ -342,6 +342,11 @@ def _strip_think_tags(text: str) -> str:
     Same applies here — we always strip before returning.
     """
 
+    # Defensive: callers may pass None if an upstream API returned an
+    # empty completion. Treat that as empty string, not a crash.
+    if not text:
+        return ""
+
     # Strip any think blocks (handles multiline content).
     cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
     return cleaned.strip()
@@ -387,7 +392,9 @@ def _call_sarvam(
 
             if response.status_code == 200:
                 content = response.json()["choices"][0]["message"]["content"]
-                return content
+                # Sarvam can return content: null (empty/reasoning-only
+                # completion). Never propagate None to callers.
+                return content or ""
 
             elif response.status_code == 429:
                 # Rate limit — wait longer

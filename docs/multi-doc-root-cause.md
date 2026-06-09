@@ -1,11 +1,13 @@
 # Multi-Document Reasoning — Root Cause Analysis
 
 **Date:** 2026-05-07  
-**Symptom:** Selecting two documents and asking a question only returns answers grounded in one document (or neither), not both.
+**Resolved:** 2026-06-09  
+**Symptom:** Selecting two documents and asking a question only returns answers grounded in one document (or neither), not both.  
+**Status:** All bugs fixed. SQL migrations 013 and 014 applied to production on 2026-06-09.
 
 ---
 
-## Bug 1 — CRITICAL: `conversation_documents` never queried on load
+## Bug 1 — CRITICAL: `conversation_documents` never queried on load ✅ FIXED
 
 **File:** `frontend/hooks/useConversations.ts:23`
 
@@ -32,7 +34,7 @@ Or fetch `conversation_documents` separately per conversation on selection. The 
 
 ---
 
-## Bug 2 — CRITICAL: Guard clause in `ChatWindow` blocks multi-doc-only submissions
+## Bug 2 — CRITICAL: Guard clause in `ChatWindow` blocks multi-doc-only submissions ✅ FIXED
 
 **File:** `frontend/components/layout/ChatWindow.tsx` (inside `handleSubmit`)
 
@@ -70,7 +72,7 @@ disabled={!conversationId && !documentId && !(documentIds && documentIds.length 
 
 ---
 
-## Bug 3 — HIGH: Structured query path ignores `document_ids`
+## Bug 3 — HIGH: Structured query path ignores `document_ids` ✅ FIXED
 
 **File:** `lambdas/query_lambda/handler.py:250,257`
 
@@ -88,7 +90,7 @@ Both functions take a single `document_id`. In a multi-doc session `document_id`
 
 ---
 
-## Bug 4 — MEDIUM: MMR rerank silently degrades when `hybrid_search_multi_doc` returns no embeddings
+## Bug 4 — MEDIUM: MMR rerank silently degrades when `hybrid_search_multi_doc` returns no embeddings ✅ FIXED
 
 **File:** `lambdas/query_lambda/mmr.py:60` + `lambdas/query_lambda/handler.py:435`
 
@@ -109,7 +111,7 @@ SELECT id, content, metadata, document_id, rrf_score, embedding
 
 ---
 
-## Bug 5 — LOW: Cache key uses only first `document_id` for single-doc path
+## Bug 5 — LOW: Cache key uses only first `document_id` for single-doc path ✅ FIXED (auto-resolved by Bug 1)
 
 **File:** `lambdas/submit/handler.py` and `lambdas/query_lambda/handler.py`
 
@@ -121,13 +123,13 @@ When `document_ids` is empty and `document_id` is set, the cache key `doc_part =
 
 ## Fix Priority
 
-| # | Severity | Effort | Impact |
-|---|----------|--------|--------|
-| 1 | Critical | Medium | Fixes multi-doc on conversation resume |
-| 2 | Critical | Small  | Fixes initial multi-doc submission edge case |
-| 3 | High     | Small  | Fixes structured queries (page/section lookups) |
-| 4 | Medium   | Small  | Restores MMR diversity for multi-doc results |
-| 5 | Low      | None   | Auto-fixed when Bug 1 is resolved |
+| # | Severity | Effort | Impact | Status |
+|---|----------|--------|--------|--------|
+| 1 | Critical | Medium | Fixes multi-doc on conversation resume | ✅ Done |
+| 2 | Critical | Small  | Fixes initial multi-doc submission edge case | ✅ Done |
+| 3 | High     | Small  | Fixes structured queries (page/section lookups) | ✅ Done |
+| 4 | Medium   | Small  | Restores MMR diversity for multi-doc results | ✅ Done |
+| 5 | Low      | None   | Auto-fixed when Bug 1 is resolved | ✅ Done |
 
 Start with Bug 1 and Bug 2 — they affect every multi-doc query. Bug 3 and 4 are correctness issues in narrower paths.
 
@@ -393,12 +395,10 @@ No Python changes needed — `mmr_rerank` already reads `chunk.get("embedding")`
 
 ### Execution Order
 
-| Step | File(s) | Type | Prerequisite |
-|------|---------|------|-------------|
-| Task 1 | `useConversations.ts` | Frontend | None |
-| Task 2 | `ChatWindow.tsx` | Frontend | None |
-| Task 4 SQL | `sql/014_...` | Migration | None |
-| Task 3 SQL | `sql/013_...` | Migration | None |
-| Task 3 Python | `handler.py` | Lambda deploy | Task 3 SQL applied |
-
-Tasks 1, 2, and both SQL migrations can be done in parallel. The Task 3 Python deploy must come after its SQL migration is applied.
+| Step | File(s) | Type | Prerequisite | Status |
+|------|---------|------|-------------|--------|
+| Task 1 | `useConversations.ts` | Frontend | None | ✅ Done |
+| Task 2 | `ChatWindow.tsx` | Frontend | None | ✅ Done |
+| Task 4 SQL | `sql/014_multi_doc_embedding_return.sql` | Migration | None | ✅ Applied 2026-06-09 |
+| Task 3 SQL | `sql/013_multi_doc_structured_queries.sql` | Migration | None | ✅ Applied 2026-06-09 |
+| Task 3 Python | `handler.py` | Lambda deploy | Task 3 SQL applied | ✅ Done |

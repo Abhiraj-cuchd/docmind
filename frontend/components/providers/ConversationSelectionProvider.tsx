@@ -1,8 +1,10 @@
 'use client';
 
-import { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useConversations } from '@/hooks/useConversations';
 import { Conversation } from '@/lib/types';
+
+const SESSION_KEY = 'conversation_selection';
 
 interface ConversationSelectionState {
   conversationId: string | null;
@@ -23,14 +25,26 @@ interface ConversationSelectionContextValue {
 
 const ConversationSelectionContext = createContext<ConversationSelectionContextValue | null>(null);
 
+function readSessionSelection(): ConversationSelectionState {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return { conversationId: null, documentId: null, documentIds: [] };
+}
+
 export function ConversationSelectionProvider({ children }: { children: React.ReactNode }) {
-  const [selection, setSelectionState] = useState<ConversationSelectionState>({
-    conversationId: null,
-    documentId: null,
-    documentIds: [],
-  });
+  const [selection, setSelectionState] = useState<ConversationSelectionState>(() =>
+    typeof window !== 'undefined' ? readSessionSelection() : { conversationId: null, documentId: null, documentIds: [] }
+  );
 
   const { conversations, loading: conversationsLoading, createConversation, deleteConversation } = useConversations();
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify(selection));
+    } catch {}
+  }, [selection]);
 
   const setSelection = useCallback((next: ConversationSelectionState) => {
     setSelectionState(next);

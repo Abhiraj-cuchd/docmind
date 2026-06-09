@@ -1,8 +1,10 @@
-# prod-serverless-rag
+# MindAgent - RAG
 
 Production-grade serverless Retrieval-Augmented Generation (RAG) system: users upload PDFs, ask questions, and get answers grounded in their own documents (optionally with text-to-speech).
 
-Target operating cost is designed to be low (on the order of a few hundred INR/month for small usage), primarily by using async pipelines + Bedrock Titan embeddings (no external embedding rate limits).
+Supports **multi-document reasoning**: users can select multiple documents when starting a conversation and ask questions that span all of them. Retrieval, HyDE, structured queries (page/section lookups), and MMR reranking all operate across the selected document set.
+
+Target operating cost is designed to be low (on the order of a few hundred INR/month for small usage), primarily by using async pipelines + Voyage AI embeddings (free tier: 200M tokens/month).
 
 ## Live environment (current)
 
@@ -78,19 +80,20 @@ Embed Worker       → AWS Bedrock Titan (embeddings)
 
 ### AI / Retrieval
 
-- **Embeddings**: Amazon Titan Embeddings V2 (`amazon.titan-embed-text-v2:0`) via **AWS Bedrock**
-- **LLM**: Sarvam AI (chat completions) for answer generation and routing
-- **HyDE**: generates a hypothetical answer (Sarvam), embeds it (Titan), and re-runs retrieval
-- **Hybrid retrieval**: Supabase RPC combining vector + keyword search and scoring (RRF)
-- **Reranking**: Maximal Marginal Relevance (MMR) in Python
+- **Embeddings**: Voyage AI (`voyage-3-large`, 1024-dim) for both query and document chunks
+- **LLM**: Sarvam AI (`sarvam-m`) for answer generation, routing, and HyDE; `<think>` tags always stripped before use
+- **HyDE**: generates a hypothetical answer (Sarvam), embeds it (Voyage), and re-runs retrieval when direct RRF score is weak (< 0.02)
+- **Hybrid retrieval**: Supabase RPC combining HNSW vector search + GIN keyword search scored via RRF — works across a single document, a selected set of documents (`hybrid_search_multi_doc`), or all user documents
+- **Reranking**: Maximal Marginal Relevance (MMR, λ=0.7) in Python; requires embeddings to be returned by the search RPC
 - **Optional TTS**: Sarvam Text-to-Speech → audio stored in S3 with a presigned GET URL
 
 ## Key design decisions
 
 - **Async everywhere:** SQS is used because API Gateway has a hard timeout; query + ingestion work happens in background Lambdas.
-- **Bedrock Titan embeddings:** avoids external embedding API rate limits; embeddings are 1024-dim to match `VECTOR(1024)`.
+- **Voyage AI embeddings:** free tier (200M tokens/month) with 1024-dim output to match `VECTOR(1024)`. `input_type` differs for query vs document.
+- **Multi-document reasoning:** a `conversation_documents` junction table links a conversation to any number of documents. The query pipeline detects `document_ids[]` and routes to `hybrid_search_multi_doc` (PostgreSQL `= ANY(doc_ids)` filter) instead of single-doc search. Cache keys hash the sorted doc-ID list so the same document set in any selection order always hits the same cache entry.
 - **Upstash Redis REST client:** Lambda-friendly (no TCP), and used for cache + job results + rate-limiting buckets.
-- **JWT verification via Supabase JWKS (ES256/RS256):** avoids legacy shared secrets.
+- **JWT verification via Supabase HS256:** extracts `user_id` from Authorization header locally; avoids a network round-trip.
 - **Skip the router when docs exist:** if a user has ready documents, retrieval is always attempted; a low RRF score triggers a direct fallback.
 
 ## Rate limiting and token budget
@@ -156,6 +159,7 @@ The Secrets Manager secret value is expected to be a JSON object containing (nam
 - `UPSTASH_REDIS_REST_TOKEN`
 - `SARVAM_API_KEY_ROUTER`
 - `SARVAM_API_KEY_RAG`
+- `VOYAGE_API_KEY`
 
 Python deps:
 
@@ -179,11 +183,15 @@ cdk deploy --all
 
 - All tables/functions live under the `rag` schema (not `public`).
 - Ensure the `rag` schema is exposed in: Supabase Dashboard → Settings → API → Data API → Exposed schemas.
+- SQL migrations in `sql/` are applied manually in filename order. Migrations applied to production:
+  - `001–011`: base schema, indexes, RLS, functions, triggers, page/section query helpers
+  - `012_multi_doc.sql`: `conversation_documents` junction table + `hybrid_search_multi_doc()` RPC
+  - `013_multi_doc_structured_queries.sql`: extends `get_chunks_by_page` / `get_chunks_by_section` to accept `target_doc_ids UUID[]`
+  - `014_multi_doc_embedding_return.sql`: adds `embedding` column to `hybrid_search_multi_doc` return for MMR reranking
 
 ## Known issues / next fixes
 
 - **Voice (TTS) returns `null`:** likely no credits or Sarvam TTS error; check `rag-processor` logs and verify `rag.refund_voice_credit()` exists.
-- **Markdown rendering in chat:** answers with `**bold**` show as raw text; frontend should render Markdown in message bubbles.
 - **Cache busting for query tests:** repeated test runs can hit Redis cache; append a timestamp to the question text when testing “live” behavior.
 
 ## Debugging commands
