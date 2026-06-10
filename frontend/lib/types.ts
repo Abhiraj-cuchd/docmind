@@ -97,3 +97,56 @@ export interface UploadPresignResponse {
 }
 
 export type ResponseStyle = 'concise' | 'explanatory' | 'conversational';
+
+// ── Generation features ───────────────────────────────────────────────
+
+export type GenerateTaskType =
+  | 'summarize_conversation'
+  | 'summarize_document'
+  | 'generate_flashcards';
+
+export interface GenerateRequest {
+  task_type: GenerateTaskType;
+  conversation_id?: string;
+  document_id?: string;
+}
+
+export interface GenerateResponse {
+  job_id: string;
+  status: 'pending';
+}
+
+export interface GeneratePollResult {
+  status: 'done' | 'error';
+  summary?: string;
+  strategy?: 'stuff' | 'map_reduce';
+  deck_id?: string;
+  count?: number;
+  message?: string;
+}
+
+export interface Summary {
+  id: string;
+  source_type: 'conversation' | 'document';
+  conversation_id: string | null;
+  document_id: string | null;
+  content: string;
+  created_at: string;
+}
+
+export interface Flashcard {
+  id: string;
+  deck_id: string;
+  question: string;
+  answer: string;
+}
+
+export interface FlashcardDeck {
+  id: string;
+  source_type: 'conversation' | 'document';
+  conversation_id: string | null;
+  document_id: string | null;
+  title: string;
+  created_at: string;
+  cards: Flashcard[];
+}

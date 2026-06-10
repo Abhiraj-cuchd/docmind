@@ -112,6 +112,24 @@ class ApiStack(cdk.Stack):
             integration=delete_integration,
         )
 
+        self.api.add_routes(
+            path="/generate",
+            methods=[apigw.HttpMethod.POST],
+            integration=submit_integration,
+        )
+
+        self.api.add_routes(
+            path="/summaries",
+            methods=[apigw.HttpMethod.GET],
+            integration=submit_integration,
+        )
+
+        self.api.add_routes(
+            path="/flashcards",
+            methods=[apigw.HttpMethod.GET],
+            integration=submit_integration,
+        )
+
         # ── Throttling via L1 CfnStage ────────────────────────────
         # CONCEPT: HttpApi (L2) doesn't expose throttling directly.
         # We reach down to the underlying CloudFormation resource

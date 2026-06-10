@@ -21,6 +21,7 @@ class ComputeStack(cdk.Stack):
         audio_bucket:    s3.Bucket,
         ingestion_queue: sqs.Queue,
         query_queue:     sqs.Queue,
+        tasks_queue:     sqs.Queue,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -188,11 +189,13 @@ class ComputeStack(cdk.Stack):
             environment={
                 **common_env,
                 "QUERY_QUEUE_URL": query_queue.queue_url,
+                "TASKS_QUEUE_URL": tasks_queue.queue_url,
                 "PDF_BUCKET_NAME": pdf_bucket.bucket_name,
             },
         )
 
         query_queue.grant_send_messages(self.submit_function)
+        tasks_queue.grant_send_messages(self.submit_function)
         self.submit_function.add_to_role_policy(secrets_policy)
         self.submit_function.add_to_role_policy(
             iam.PolicyStatement(
@@ -316,6 +319,40 @@ class ComputeStack(cdk.Stack):
 
         self.poll_function.add_to_role_policy(secrets_policy)
 
+        # ── Lambda 7 — Generation Worker ──────────────────────────
+        self.generation_function = lambda_.Function(
+            self,
+            "GenerationFunction",
+            function_name="rag-generation",
+            runtime=lambda_.Runtime.PYTHON_3_11,
+            handler="handler.handler",
+            code=lambda_.Code.from_asset(
+                "../lambdas/generation_lambda",
+                bundling=cdk.BundlingOptions(
+                    image=lambda_.Runtime.PYTHON_3_11.bundling_image,
+                    command=[
+                        "bash", "-c",
+                        "cp -r . /asset-output/"
+                    ],
+                ),
+            ),
+            layers=common_layers,
+            timeout=cdk.Duration.minutes(5),
+            memory_size=512,
+            environment=common_env,
+        )
+
+        self.generation_function.add_to_role_policy(secrets_policy)
+        tasks_queue.grant_consume_messages(self.generation_function)
+
+        self.generation_function.add_event_source(
+            lambda_events.SqsEventSource(
+                tasks_queue,
+                batch_size=1,
+                report_batch_item_failures=True,
+            )
+        )
+
         # ── Outputs ────────────────────────────────────────────────
         cdk.CfnOutput(self, "IndexerFunctionArn",
                       value=self.indexer_function.function_arn)
@@ -331,3 +368,5 @@ class ComputeStack(cdk.Stack):
                       value=self.delete_function.function_arn)
         cdk.CfnOutput(self, "PollFunctionArn",
                       value=self.poll_function.function_arn)
+        cdk.CfnOutput(self, "GenerationFunctionArn",
+                      value=self.generation_function.function_arn)

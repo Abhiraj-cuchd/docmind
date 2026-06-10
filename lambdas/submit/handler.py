@@ -43,6 +43,7 @@ s3_client = boto3.client(
 supabase = get_service_client()
 
 QUERY_QUEUE_URL = os.getenv("QUERY_QUEUE_URL")
+TASKS_QUEUE_URL = os.getenv("TASKS_QUEUE_URL")
 PDF_BUCKET_NAME = os.getenv("PDF_BUCKET_NAME")
 CACHE_TTL       = 3600
 TTS_MAX_CHARS   = 500
@@ -77,6 +78,12 @@ def handler(event, context):
         return handle_upload(event)
     elif "/document-url" in path:
         return handle_document_url(event)
+    elif "/generate" in path:
+        return handle_generate(event)
+    elif "/summaries" in path:
+        return handle_get_summaries(event)
+    elif "/flashcards" in path:
+        return handle_get_flashcards(event)
     else:
         return handle_query(event)
 
@@ -415,6 +422,194 @@ def handle_document_url(event: dict) -> dict:
         print(f"[DocumentURL] Failed to generate presigned URL: {e}")
         return _error_response(500, f"Failed to generate document URL: {str(e)}")
 # ─────────────────────────────────────────────────────────────────────
+# GENERATE HANDLER
+# ─────────────────────────────────────────────────────────────────────
+
+VALID_TASK_TYPES = {"summarize_conversation", "summarize_document", "generate_flashcards"}
+
+
+def handle_generate(event: dict) -> dict:
+    """
+    POST /generate — enqueues an async generation task.
+
+    Body: { task_type, conversation_id?, document_id? }
+    Returns: { job_id, status: "pending" }
+    Frontend polls GET /result/{job_id} — same contract as /query.
+    """
+
+    try:
+        user    = get_user_from_event(event)
+        user_id = user["user_id"]
+    except Exception as e:
+        return create_auth_error_response(str(e))
+
+    try:
+        body = json.loads(event.get("body") or "{}")
+    except json.JSONDecodeError:
+        return _error_response(400, "Invalid JSON in request body")
+
+    task_type       = body.get("task_type", "").strip()
+    conversation_id = body.get("conversation_id", "").strip() or None
+    document_id     = body.get("document_id", "").strip() or None
+
+    if task_type not in VALID_TASK_TYPES:
+        return _error_response(
+            400,
+            f"task_type must be one of: {', '.join(sorted(VALID_TASK_TYPES))}"
+        )
+
+    # Validate ownership of the referenced resource
+    if task_type == "summarize_conversation" or (
+        task_type == "generate_flashcards" and conversation_id
+    ):
+        if not conversation_id:
+            return _error_response(400, "conversation_id is required for this task_type")
+        if not _get_conversation(conversation_id, user_id):
+            return _error_response(404, "Conversation not found or does not belong to you")
+
+    if task_type == "summarize_document" or (
+        task_type == "generate_flashcards" and document_id and not conversation_id
+    ):
+        if not document_id:
+            return _error_response(400, "document_id is required for this task_type")
+        if not _get_document(document_id, user_id):
+            return _error_response(404, "Document not found or does not belong to you")
+
+    # Write pending status before enqueue — same pattern as handle_query
+    r      = get_redis_client()
+    job_id = str(uuid.uuid4())
+
+    r.setex(
+        f"job:{job_id}",
+        3600,
+        json.dumps({"status": "pending"}),
+    )
+
+    sqs_client.send_message(
+        QueueUrl=TASKS_QUEUE_URL,
+        MessageBody=json.dumps({
+            "job_id":          job_id,
+            "user_id":         user_id,
+            "task_type":       task_type,
+            "conversation_id": conversation_id,
+            "document_id":     document_id,
+        }),
+    )
+
+    print(f"[Generate] Job {job_id} enqueued: task_type={task_type} user={user_id}")
+
+    return _success_response({"job_id": job_id, "status": "pending"})
+
+
+# ─────────────────────────────────────────────────────────────────────
+# READ HANDLERS — summaries + flashcards
+# ─────────────────────────────────────────────────────────────────────
+
+def handle_get_summaries(event: dict) -> dict:
+    """
+    GET /summaries?conversation_id=<uuid>
+    GET /summaries?document_id=<uuid>
+    Returns the saved summary for the given source, scoped to the user.
+    """
+
+    try:
+        user    = get_user_from_event(event)
+        user_id = user["user_id"]
+    except Exception as e:
+        return create_auth_error_response(str(e))
+
+    params          = event.get("queryStringParameters") or {}
+    conversation_id = params.get("conversation_id", "").strip() or None
+    document_id     = params.get("document_id", "").strip() or None
+
+    if not conversation_id and not document_id:
+        return _error_response(400, "conversation_id or document_id query parameter is required")
+
+    try:
+        query = supabase.schema("rag").table("summaries") \
+            .select("id, source_type, conversation_id, document_id, content, created_at") \
+            .eq("user_id", user_id)
+
+        if conversation_id:
+            query = query.eq("conversation_id", conversation_id)
+        else:
+            query = query.eq("document_id", document_id)
+
+        result = query.execute()
+        return _success_response({"summaries": result.data or []})
+
+    except Exception as e:
+        print(f"[Summaries] Failed to fetch: {e}")
+        return _error_response(500, "Failed to fetch summaries")
+
+
+def handle_get_flashcards(event: dict) -> dict:
+    """
+    GET /flashcards?conversation_id=<uuid>
+    GET /flashcards?document_id=<uuid>
+    GET /flashcards?deck_id=<uuid>
+    Returns decks (with cards) scoped to the user.
+    """
+
+    try:
+        user    = get_user_from_event(event)
+        user_id = user["user_id"]
+    except Exception as e:
+        return create_auth_error_response(str(e))
+
+    params          = event.get("queryStringParameters") or {}
+    conversation_id = params.get("conversation_id", "").strip() or None
+    document_id     = params.get("document_id", "").strip() or None
+    deck_id         = params.get("deck_id", "").strip() or None
+
+    if not conversation_id and not document_id and not deck_id:
+        return _error_response(
+            400,
+            "One of conversation_id, document_id, or deck_id query parameter is required"
+        )
+
+    try:
+        # Fetch deck(s) scoped by user_id
+        deck_query = supabase.schema("rag").table("flashcard_decks") \
+            .select("id, source_type, conversation_id, document_id, title, created_at") \
+            .eq("user_id", user_id)
+
+        if deck_id:
+            deck_query = deck_query.eq("id", deck_id)
+        elif conversation_id:
+            deck_query = deck_query.eq("conversation_id", conversation_id)
+        else:
+            deck_query = deck_query.eq("document_id", document_id)
+
+        decks_result = deck_query.execute()
+        decks        = decks_result.data or []
+
+        if not decks:
+            return _success_response({"decks": []})
+
+        # Fetch cards for all returned decks in one query
+        deck_ids     = [d["id"] for d in decks]
+        cards_result = supabase.schema("rag").table("flashcards") \
+            .select("id, deck_id, question, answer") \
+            .in_("deck_id", deck_ids) \
+            .order("created_at") \
+            .execute()
+
+        cards_by_deck: dict[str, list] = {}
+        for card in (cards_result.data or []):
+            cards_by_deck.setdefault(card["deck_id"], []).append(card)
+
+        for deck in decks:
+            deck["cards"] = cards_by_deck.get(deck["id"], [])
+
+        return _success_response({"decks": decks})
+
+    except Exception as e:
+        print(f"[Flashcards] Failed to fetch: {e}")
+        return _error_response(500, "Failed to fetch flashcards")
+
+
+# ─────────────────────────────────────────────────────────────────────
 # PRIVATE HELPERS
 # ─────────────────────────────────────────────────────────────────────
 
@@ -522,6 +717,24 @@ def _get_conversation(conversation_id: str, user_id: str) -> dict | None:
             .select("id, document_id") \
             .eq("id", conversation_id) \
             .eq("user_id", user_id) \
+            .single() \
+            .execute()
+        return result.data
+    except Exception:
+        return None
+
+
+def _get_document(document_id: str, user_id: str) -> dict | None:
+    """
+    Returns the document row if it belongs to this user and is ready.
+    """
+    try:
+        result = supabase.schema("rag") \
+            .table("documents") \
+            .select("id, filename, status") \
+            .eq("id", document_id) \
+            .eq("user_id", user_id) \
+            .eq("status", "ready") \
             .single() \
             .execute()
         return result.data

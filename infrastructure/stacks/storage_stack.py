@@ -92,6 +92,29 @@ class StorageStack(cdk.Stack):
             ),
         )
 
+        # ── Tasks Queue ────────────────────────────────────────────
+        # Generation Lambda timeout is 5 minutes → 6 minute visibility.
+        # max_receive_count=3 before DLQ — same as query queue.
+
+        self.tasks_dlq = sqs.Queue(
+            self,
+            "TasksDLQ",
+            queue_name="rag-tasks-dlq",
+            retention_period=cdk.Duration.days(7),
+        )
+
+        self.tasks_queue = sqs.Queue(
+            self,
+            "TasksQueue",
+            queue_name="rag-tasks-queue",
+            visibility_timeout=cdk.Duration.seconds(360),
+            retention_period=cdk.Duration.days(1),
+            dead_letter_queue=sqs.DeadLetterQueue(
+                max_receive_count=3,
+                queue=self.tasks_dlq,
+            ),
+        )
+
         # ── PDF Bucket ─────────────────────────────────────────────
         self.pdf_bucket = s3.Bucket(
             self,

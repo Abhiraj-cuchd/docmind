@@ -19,6 +19,11 @@ RAG_REDIS_KEY     = "rate_limit:sarvam:rag"
 ROUTER_TIMEOUT_S  = 15
 RAG_TIMEOUT_S     = 45
 
+NVIDIA_REDIS_KEY  = "rate_limit:nvidia:tasks"
+NVIDIA_CAPACITY   = 40
+NVIDIA_COST       = 1
+NVIDIA_TIMEOUT_S  = 45
+
 
 def get_redis_client() -> Redis:
     return Redis(
@@ -27,13 +32,13 @@ def get_redis_client() -> Redis:
     )
 
 
-def get_available_tokens(r: Redis, bucket_key: str) -> int:
+def get_available_tokens(r: Redis, bucket_key: str, capacity: int = BUCKET_CAPACITY) -> int:
     now_ms       = int(time.time() * 1000)
     window_start = now_ms - (WINDOW_SECONDS * 1000)
 
     r.zremrangebyscore(bucket_key, 0, window_start)
     used      = r.zcard(bucket_key)
-    available = max(0, BUCKET_CAPACITY - used)
+    available = max(0, capacity - used)
 
     return available
 
@@ -43,12 +48,13 @@ def acquire_tokens(
     bucket_key: str,
     cost:       int,
     timeout_s:  int,
+    capacity:   int = BUCKET_CAPACITY,
 ) -> bool:
     start     = time.time()
     wait_time = 1.0
 
     while time.time() - start < timeout_s:
-        available = get_available_tokens(r, bucket_key)
+        available = get_available_tokens(r, bucket_key, capacity)
 
         if available >= cost:
             now_ms = int(time.time() * 1000)
@@ -94,9 +100,13 @@ def acquire_generate_tokens(r: Redis) -> bool:
     return acquire_tokens(r, RAG_REDIS_KEY, GENERATE_COST, RAG_TIMEOUT_S)
 
 
+def acquire_nvidia_token(r: Redis) -> bool:
+    return acquire_tokens(r, NVIDIA_REDIS_KEY, NVIDIA_COST, NVIDIA_TIMEOUT_S, capacity=NVIDIA_CAPACITY)
+
+
 def get_rate_limit_snapshot(r: Redis) -> dict:
-    router_available = get_available_tokens(r, ROUTER_REDIS_KEY)
-    rag_available    = get_available_tokens(r, RAG_REDIS_KEY)
+    router_available = get_available_tokens(r, ROUTER_REDIS_KEY, capacity=BUCKET_CAPACITY)
+    rag_available    = get_available_tokens(r, RAG_REDIS_KEY, capacity=BUCKET_CAPACITY)
 
     return {
         "router_bucket": {

@@ -45,6 +45,7 @@ compute = ComputeStack(
     audio_bucket=storage.audio_bucket,
     ingestion_queue=storage.ingestion_queue,
     query_queue=storage.query_queue,
+    tasks_queue=storage.tasks_queue,
 )
 
 # ── Stack 3: API ───────────────────────────────────────────────────────
