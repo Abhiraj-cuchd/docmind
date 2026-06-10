@@ -16,6 +16,7 @@ export async function proxy(request: NextRequest) {
     const pathname = request.nextUrl.pathname
 
     if (
+      pathname === '/' ||
       pathname.startsWith('/login') ||
       pathname.startsWith('/register') ||
       pathname.startsWith('/auth')
