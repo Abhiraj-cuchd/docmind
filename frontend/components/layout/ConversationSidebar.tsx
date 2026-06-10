@@ -1,17 +1,17 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Conversation } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Plus, ChatCircle, SignOut, Trash, Check, X } from '@phosphor-icons/react';
-import { useAuth } from '@/hooks/useAuth';
+import { Plus, ChatCircle, Trash, Check, X } from '@phosphor-icons/react';
 import { useDocuments } from '@/hooks/useDocuments';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
 import { toast } from 'sonner';
-import { BrainCircuit, ChevronUp, FileText, PlusCircle } from 'lucide-react';
+import { BrainCircuit, ChevronRight, ChevronUp, FileText, Layers, MessageSquare, PlusCircle, Sparkles } from 'lucide-react';
 import { DOC_COLORS } from '@/lib/docColors';
 
 interface ConversationSidebarProps {
@@ -37,24 +37,12 @@ export function ConversationSidebar({
   onDelete,
   onDeleteActive,
 }: ConversationSidebarProps) {
-  const { signOut, user } = useAuth();
+  const router = useRouter();
   const { documents, loading: documentsLoading } = useDocuments();
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [documentsCollapsed, setDocumentsCollapsed] = useState(false);
-  const displayName =
-    (user?.user_metadata?.full_name as string | undefined) ??
-    (user?.user_metadata?.name as string | undefined) ??
-    user?.email?.split('@')[0] ??
-    'User';
-  const initials = useMemo(() => (
-    displayName
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map(part => part[0]?.toUpperCase() ?? '')
-      .join('') || 'U'
-  ), [displayName]);
+  const [documentsCollapsed, setDocumentsCollapsed] = useState(true);
+  const [intelligenceCollapsed, setIntelligenceCollapsed] = useState(true);
 
   const handleDeleteClick = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -283,28 +271,56 @@ export function ConversationSidebar({
           </ScrollArea>
           )}
         </section>
+        {/* Intelligence collapsible */}
+        <section className="flex shrink-0 flex-col pt-4">
+          <button
+            type="button"
+            onClick={() => setIntelligenceCollapsed(prev => !prev)}
+            className="flex shrink-0 items-center justify-between rounded-xl border border-white/10 bg-white/[0.05] px-3 py-2 text-left text-[13px] font-semibold text-white shadow-[0_6px_16px_rgba(2,6,23,0.4)] transition-colors hover:bg-white/[0.08]"
+            aria-expanded={!intelligenceCollapsed}
+          >
+            <span className="flex items-center gap-2">
+              <span className="flex h-6 w-6 items-center justify-center rounded-md bg-white/10">
+                <Sparkles className="h-3.5 w-3.5 text-white/80" />
+              </span>
+              <span>Intelligence</span>
+            </span>
+            <span className="flex items-center gap-2 text-[11px] font-medium text-white/60">
+              {intelligenceCollapsed ? 'Expand' : 'Collapse'}
+              <ChevronUp
+                className={cn(
+                  'h-4 w-4 text-white/60 transition-transform',
+                  intelligenceCollapsed && 'rotate-180',
+                )}
+              />
+            </span>
+          </button>
+
+          {!intelligenceCollapsed && (
+            <div className="mt-3 flex flex-col gap-1.5">
+              {([
+                { tab: 'doc-summary',  label: 'Document Summary',      icon: Sparkles      },
+                { tab: 'conv-summary', label: 'Conversation Summary',   icon: MessageSquare },
+                { tab: 'flashcards',   label: 'Flashcards',             icon: Layers        },
+              ] as { tab: string; label: string; icon: typeof Sparkles }[]).map(({ tab, label, icon: Icon }) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => router.push(`/intelligence?tab=${tab}`)}
+                  className="flex items-center justify-between gap-3 rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2.5 text-left text-[13px] text-white/70 transition-colors hover:bg-white/[0.07] hover:text-white"
+                >
+                  <span className="flex items-center gap-2">
+                    <Icon className="h-3.5 w-3.5 text-white/50" />
+                    {label}
+                  </span>
+                  <ChevronRight className="h-3.5 w-3.5 shrink-0 text-white/25" />
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
 
-      <div className="border-t border-white/8 px-4 py-4">
-        <div className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-white/85">
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#0f4cbf] text-sm font-semibold text-white">
-            {initials}
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-[15px] font-medium text-white">{displayName}</p>
-            <p className="truncate text-xs text-white/35">{user?.email ?? 'Signed in'}</p>
-          </div>
-          <ChevronUp className="h-4 w-4 text-white/35" />
-        </div>
-
-        <button
-          onClick={signOut}
-          className="mt-2 flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-white/65 transition-colors hover:bg-white/[0.04] hover:text-white"
-        >
-          <SignOut className="size-4" />
-          Sign out
-        </button>
-      </div>
     </div>
   );
 }

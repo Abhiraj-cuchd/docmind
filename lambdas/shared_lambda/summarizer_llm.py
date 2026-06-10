@@ -5,13 +5,13 @@ import requests
 from shared_lambda.secrets import get_secret
 
 NVIDIA_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
-NVIDIA_MODEL   = "nvidia/llama-3.1-nemotron-70b-instruct"
+NVIDIA_MODEL   = "nvidia/llama-3.3-nemotron-super-49b-v1.5"
 
 MAX_RETRIES  = 3
 RETRY_DELAY  = 2
 
 
-def generate(messages: list[dict], max_tokens: int = 2048, temperature: float = 0.5) -> str:
+def generate(messages: list[dict], max_tokens: int = 4096, temperature: float = 0.6) -> str:
     """
     Single Nemotron call with retry/backoff. Returns raw text.
     No <think> stripping — Nemotron does not emit reasoning tags.
@@ -29,12 +29,14 @@ def generate(messages: list[dict], max_tokens: int = 2048, temperature: float = 
                     "Accept":        "application/json",
                 },
                 json={
-                    "model":       NVIDIA_MODEL,
-                    "messages":    messages,
-                    "max_tokens":  max_tokens,
-                    "temperature": temperature,
-                    "top_p":       1.0,
-                    "stream":      False,
+                    "model":               NVIDIA_MODEL,
+                    "messages":            messages,
+                    "max_tokens":          max_tokens,
+                    "temperature":         temperature,
+                    "top_p":               0.95,
+                    "frequency_penalty":   0,
+                    "presence_penalty":    0,
+                    "stream":              False,
                 },
                 timeout=90,
             )

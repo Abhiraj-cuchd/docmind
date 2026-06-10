@@ -8,9 +8,11 @@ import type { Source } from '@/lib/types';
 import PDFViewer, { HighlightTarget } from '@/components/pdf/PDFViewer';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { ArrowUpRight, Download, FileText, Highlighter, Info, LayoutGrid, Loader2, MoreVertical, NotebookPen, Printer, TriangleAlert } from 'lucide-react';
+import { ArrowUpRight, Download, FileText, Info, Layers, LayoutGrid, Loader2, MessageSquare, MoreVertical, Sparkles, TriangleAlert, X } from 'lucide-react';
 import { getDocColor } from '@/lib/docColors';
 import { toast } from 'sonner';
+import { SummaryPanel } from '@/components/generation/SummaryPanel';
+import { FlashcardDeckViewer } from '@/components/generation/FlashcardDeckViewer';
 
 interface ReferencedDoc {
   id: string;
@@ -23,9 +25,12 @@ interface ViewerDocument {
   status?: string;
 }
 
+type IntelligenceTab = 'summary' | 'flashcards' | 'conv-summary';
+
 interface DocumentPanelProps {
   activeDocumentId: string | null;
   activeDocumentIds: string[];
+  activeConversationId?: string | null;
   referencedDocs: ReferencedDoc[];
   onDocumentSelect: (documentId: string) => void;
   onClearAll: () => void;
@@ -61,6 +66,7 @@ function FooterAction({
 export default function DocumentPanel({
   activeDocumentId,
   activeDocumentIds,
+  activeConversationId,
   referencedDocs,
   onDocumentSelect,
   onClearAll,
@@ -75,6 +81,8 @@ export default function DocumentPanel({
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState<number>(activeHighlight?.pageNumber ?? 1);
   const [numPages, setNumPages] = useState<number>(0);
+  const [intelligenceOpen, setIntelligenceOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<IntelligenceTab>('summary');
 
   const viewerDocumentIds = useMemo(
     () => referencedDocs.length > 0
@@ -180,23 +188,6 @@ export default function DocumentPanel({
     window.open(pdfUrl, '_blank', 'noopener,noreferrer');
   }, [pdfUrl]);
 
-  const handleHighlightPage = useCallback(() => {
-    if (!highlight) return;
-    setCurrentPage(highlight.pageNumber);
-  }, [highlight]);
-
-  const handleAddNote = useCallback(() => {
-    if (!activeSource?.snippet) {
-      toast.info('No source snippet is active on this page yet.');
-      return;
-    }
-
-    navigator.clipboard.writeText(activeSource.snippet).then(
-      () => toast.success('Snippet copied to clipboard'),
-      () => toast.error('Could not copy the snippet'),
-    );
-  }, [activeSource]);
-
   const handleDownload = useCallback(() => {
     if (!pdfUrl) return;
     const link = document.createElement('a');
@@ -206,11 +197,6 @@ export default function DocumentPanel({
     link.rel = 'noopener noreferrer';
     link.click();
   }, [activeDocument?.filename, pdfUrl]);
-
-  const handlePrint = useCallback(() => {
-    if (!pdfUrl) return;
-    window.open(pdfUrl, '_blank', 'noopener,noreferrer');
-  }, [pdfUrl]);
 
   if (!activeDocument) {
     return (
@@ -374,21 +360,69 @@ export default function DocumentPanel({
         ) : null}
       </div>
 
+      {/* Intelligence drawer */}
+      {intelligenceOpen && (
+        <div className="border-t border-white/8 bg-[#060d18]">
+          {/* Tab bar */}
+          <div className="flex items-center gap-1 border-b border-white/8 px-4 pt-3 pb-0">
+            {([
+              { id: 'summary',      label: 'Document Summary', icon: Sparkles },
+              { id: 'conv-summary', label: 'Chat Summary',     icon: MessageSquare },
+              { id: 'flashcards',   label: 'Flashcards',       icon: Layers },
+            ] as { id: IntelligenceTab; label: string; icon: ComponentType<{ className?: string }> }[]).map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setActiveTab(id)}
+                className={cn(
+                  'flex items-center gap-1.5 rounded-t-lg border-b-2 px-3 py-2 text-xs font-medium transition-colors',
+                  activeTab === id
+                    ? 'border-blue-400 text-white'
+                    : 'border-transparent text-white/40 hover:text-white/70',
+                )}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Tab content */}
+          <div className="max-h-64 overflow-y-auto p-4">
+            {activeTab === 'summary' && (
+              <SummaryPanel documentId={resolvedActiveDocumentId ?? undefined} />
+            )}
+            {activeTab === 'conv-summary' && (
+              <SummaryPanel conversationId={activeConversationId ?? undefined} />
+            )}
+            {activeTab === 'flashcards' && (
+              <FlashcardDeckViewer
+                documentId={resolvedActiveDocumentId ?? undefined}
+                conversationId={activeConversationId ?? undefined}
+              />
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="border-t border-white/8 px-5 py-4">
         <div className="flex flex-wrap items-center gap-3">
           <FooterAction
-            icon={Highlighter}
-            label="Highlight on page"
-            onClick={handleHighlightPage}
-            disabled={!highlight}
+            icon={Sparkles}
+            label="Summarize"
+            onClick={() => { setIntelligenceOpen(v => !v); setActiveTab('summary'); }}
           />
           <FooterAction
-            icon={NotebookPen}
-            label="Add note"
-            onClick={handleAddNote}
-            disabled={!activeSource}
+            icon={MessageSquare}
+            label="Chat Summary"
+            onClick={() => { setIntelligenceOpen(v => !v); setActiveTab('conv-summary'); }}
+            disabled={!activeConversationId}
           />
-          <FooterAction icon={Printer} label="Print" onClick={handlePrint} disabled={!pdfUrl} />
+          <FooterAction
+            icon={Layers}
+            label="Flashcards"
+            onClick={() => { setIntelligenceOpen(v => !v); setActiveTab('flashcards'); }}
+          />
           <FooterAction icon={Download} label="Download" onClick={handleDownload} disabled={!pdfUrl} />
           <button
             type="button"
@@ -400,6 +434,15 @@ export default function DocumentPanel({
           >
             <LayoutGrid className="h-4 w-4" />
           </button>
+          {intelligenceOpen && (
+            <button
+              type="button"
+              onClick={() => setIntelligenceOpen(false)}
+              className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/8 bg-[#0a1220] text-white/50 transition-colors hover:text-white"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
         </div>
       </div>
     </aside>

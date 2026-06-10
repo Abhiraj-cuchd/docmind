@@ -1,7 +1,7 @@
-import json
 from shared_lambda.supabase_client import get_service_client
 from shared_lambda.rate_limiter    import acquire_nvidia_token
 from shared_lambda                 import summarizer_llm
+from tasks.utils                   import write_result
 
 # Chars below which we stuff all chunks into a single call (~50k tokens,
 # safely within Nemotron's 128k context window).
@@ -22,10 +22,9 @@ def summarize_conversation(
     conversation_id: str,
     r,
 ) -> None:
-    from generation_lambda.handler import _write_result
 
     if not conversation_id:
-        _write_result(r, job_id, {"status": "error", "message": "conversation_id is required"})
+        write_result(r, job_id, {"status": "error", "message": "conversation_id is required"})
         return
 
     supabase = get_service_client()
@@ -41,7 +40,7 @@ def summarize_conversation(
     messages = result.data or []
 
     if not messages:
-        _write_result(r, job_id, {
+        write_result(r, job_id, {
             "status":  "error",
             "message": "Conversation has no messages to summarize",
         })
@@ -76,7 +75,7 @@ def summarize_conversation(
 
     _persist_conversation_summary(supabase, user_id, conversation_id, summary)
 
-    _write_result(r, job_id, {
+    write_result(r, job_id, {
         "status":  "done",
         "summary": summary,
     })
@@ -115,10 +114,9 @@ def summarize_document(
     document_id: str,
     r,
 ) -> None:
-    from generation_lambda.handler import _write_result
 
     if not document_id:
-        _write_result(r, job_id, {"status": "error", "message": "document_id is required"})
+        write_result(r, job_id, {"status": "error", "message": "document_id is required"})
         return
 
     supabase = get_service_client()
@@ -132,12 +130,12 @@ def summarize_document(
         .execute()
 
     if not doc_result.data:
-        _write_result(r, job_id, {"status": "error", "message": "Document not found"})
+        write_result(r, job_id, {"status": "error", "message": "Document not found"})
         return
 
     doc = doc_result.data
     if doc["status"] != "ready":
-        _write_result(r, job_id, {
+        write_result(r, job_id, {
             "status":  "error",
             "message": f"Document is not ready (status: {doc['status']})",
         })
@@ -155,7 +153,7 @@ def summarize_document(
     chunks = chunks_result.data or []
 
     if not chunks:
-        _write_result(r, job_id, {
+        write_result(r, job_id, {
             "status":  "error",
             "message": "Document has no chunks — re-index may be needed",
         })
@@ -174,7 +172,7 @@ def summarize_document(
 
     _persist_document_summary(supabase, user_id, document_id, summary)
 
-    _write_result(r, job_id, {
+    write_result(r, job_id, {
         "status":   "done",
         "summary":  summary,
         "strategy": strategy,

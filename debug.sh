@@ -32,6 +32,10 @@ alias logs-indexer='aws logs tail /aws/lambda/rag-indexer \
 alias logs-embed='aws logs tail /aws/lambda/rag-embed-worker \
   --region ap-south-1 --since 10m --follow'
 
+# ── Generation (summarize / flashcards via NVIDIA Nemotron) ────
+alias logs-generation='aws logs tail /aws/lambda/rag-generation \
+  --region ap-south-1 --since 10m --follow'
+
 
 # =============================================================
 # COPY-PASTE VERSIONS (no alias needed)
@@ -114,6 +118,25 @@ aws logs tail /aws/lambda/rag-embed-worker \
   --region ap-south-1 --since 10m \
   | grep -i "batch\|embed\|chunk\|ready"
 
+# ── Generation — all ────────────────────────────────────────────
+aws logs tail /aws/lambda/rag-generation \
+  --region ap-south-1 --since 10m
+
+# ── Generation — errors only ────────────────────────────────────
+aws logs tail /aws/lambda/rag-generation \
+  --region ap-south-1 --since 10m \
+  | grep -i "error\|failed\|exception\|traceback"
+
+# ── Generation — task progress ──────────────────────────────────
+aws logs tail /aws/lambda/rag-generation \
+  --region ap-south-1 --since 10m \
+  | grep -i "task_type\|job_id\|summarize\|flashcard\|done\|rate_limit"
+
+# ── Generation — NVIDIA rate limit hits ────────────────────────
+aws logs tail /aws/lambda/rag-generation \
+  --region ap-south-1 --since 30m \
+  | grep -i "nvidia\|rate_limit\|RATE_LIMIT_WAIT\|requeue"
+
 
 # =============================================================
 # ALL LAMBDAS AT ONCE
@@ -133,6 +156,9 @@ aws logs tail /aws/lambda/rag-indexer \
   --region ap-south-1 --since 5m && \
 echo "=== EMBED WORKER ===" && \
 aws logs tail /aws/lambda/rag-embed-worker \
+  --region ap-south-1 --since 5m && \
+echo "=== GENERATION ===" && \
+aws logs tail /aws/lambda/rag-generation \
   --region ap-south-1 --since 5m
 
 
@@ -173,6 +199,35 @@ aws logs tail /aws/lambda/rag-embed-worker \
 # | filter @message like /Job.*done|Job.*failed/
 # | stats count() by bin(5m)
 
+# ── Generation task outcomes ───────────────────────────────────
+# Log group: /aws/lambda/rag-generation
+#
+# Query:
+# fields @timestamp, @message
+# | filter @message like /task_type|done|error|RATE_LIMIT_WAIT/
+# | sort @timestamp desc
+# | limit 50
+
+# ── Generation slow tasks (>60s) ──────────────────────────────
+# Log group: /aws/lambda/rag-generation
+#
+# Query:
+# fields @timestamp, @duration, @message
+# | filter @type = "REPORT"
+# | filter @duration > 60000
+# | sort @duration desc
+# | limit 20
+
+# ── NVIDIA rate limit wait events ─────────────────────────────
+# Log groups:
+#   /aws/lambda/rag-generation
+#
+# Query:
+# fields @timestamp, @message
+# | filter @message like /RATE_LIMIT_WAIT|nvidia|requeue/
+# | sort @timestamp desc
+# | limit 30
+
 
 # =============================================================
 # SQS QUEUE STATUS
@@ -209,8 +264,19 @@ aws sqs get-queue-attributes \
   --attribute-names ApproximateNumberOfMessages \
     ApproximateNumberOfMessagesNotVisible
 
+# ── Check tasks queue depth (generation jobs) ──────────────────
+aws sqs get-queue-attributes \
+  --region ap-south-1 \
+  --queue-url $(aws sqs get-queue-url \
+    --region ap-south-1 \
+    --queue-name rag-tasks-queue \
+    --query QueueUrl --output text) \
+  --attribute-names ApproximateNumberOfMessages \
+    ApproximateNumberOfMessagesNotVisible \
+    ApproximateNumberOfMessagesDelayed
+
 # ── Check DLQ message counts ───────────────────────────────────
-for queue in rag-ingestion-dlq rag-query-dlq rag-embed-dlq; do
+for queue in rag-ingestion-dlq rag-query-dlq rag-embed-dlq rag-tasks-dlq; do
   echo "=== $queue ==="
   aws sqs get-queue-attributes \
     --region ap-south-1 \
@@ -228,7 +294,7 @@ done
 # =============================================================
 
 # ── Check all lambda last modified + runtime ───────────────────
-for fn in rag-processor rag-submit rag-poll rag-indexer rag-embed-worker; do
+for fn in rag-processor rag-submit rag-poll rag-indexer rag-embed-worker rag-generation; do
   echo "=== $fn ==="
   aws lambda get-function-configuration \
     --region ap-south-1 \

@@ -1,6 +1,7 @@
 from shared_lambda.supabase_client import get_service_client
 from shared_lambda.rate_limiter    import acquire_nvidia_token
 from shared_lambda                 import summarizer_llm
+from tasks.utils                   import write_result
 
 MAX_FLASHCARDS = 20   # cap per generation to keep prompt manageable
 
@@ -12,10 +13,8 @@ def generate_flashcards(
     document_id:     str | None,
     r,
 ) -> None:
-    from generation_lambda.handler import _write_result
-
     if not conversation_id and not document_id:
-        _write_result(r, job_id, {
+        write_result(r, job_id, {
             "status":  "error",
             "message": "Either conversation_id or document_id is required",
         })
@@ -27,7 +26,7 @@ def generate_flashcards(
     )
 
     if not source_content:
-        _write_result(r, job_id, {
+        write_result(r, job_id, {
             "status":  "error",
             "message": "No content found to generate flashcards from",
         })
@@ -66,7 +65,7 @@ def generate_flashcards(
     ]
 
     if not valid_cards:
-        _write_result(r, job_id, {
+        write_result(r, job_id, {
             "status":  "error",
             "message": "LLM returned no valid flashcards",
         })
@@ -76,7 +75,7 @@ def generate_flashcards(
         supabase, user_id, source_type, conversation_id, document_id, valid_cards
     )
 
-    _write_result(r, job_id, {
+    write_result(r, job_id, {
         "status":  "done",
         "deck_id": deck_id,
         "count":   len(valid_cards),

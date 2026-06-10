@@ -132,6 +132,7 @@ export function ThreePanelLayout({
         <DocumentPanel
           activeDocumentId={activeDocumentId}
           activeDocumentIds={selectedDocumentIds}
+          activeConversationId={activeConversationId}
           referencedDocs={referencedDocs}
           onDocumentSelect={handleFocusDocument}
           onClearAll={handleClearDocuments}

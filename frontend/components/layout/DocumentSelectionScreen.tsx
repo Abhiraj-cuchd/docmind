@@ -2,11 +2,11 @@
 
 import { useDocuments } from '@/hooks/useDocuments'
 import { useAuth } from '@/hooks/useAuth'
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { Document } from '@/lib/types'
 import {
   FileText, Upload, CheckCircle, AlertCircle,
-  Loader2, Hash, ArrowRight, RefreshCw, User, ChevronDown, Trash2, Check
+  Loader2, Hash, ArrowRight, RefreshCw, User, ChevronDown, Trash2, Check, Database, LogOut
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -165,12 +165,11 @@ function SkeletonCard({ index }: { index: number }) {
 
 export function DocumentSelectionScreen({ onSelect }: Props) {
   const { documents, loading, refresh, deleteDocument } = useDocuments()
-  const { user } = useAuth()
-  const [agentOpen, setAgentOpen] = useState(false)
-  const [agentValue, setAgentValue] = useState('rag')
+  const { user, signOut } = useAuth()
   const [deleteTarget, setDeleteTarget] = useState<Document | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
 
   const handleConfirmDelete = async () => {
     if (!deleteTarget) return
@@ -179,16 +178,6 @@ export function DocumentSelectionScreen({ onSelect }: Props) {
     setDeleting(false)
     setDeleteTarget(null)
   }
-  const agentOptions = useMemo(() => (
-    [
-      { value: 'rag', label: 'RAG Agent' },
-      { value: 'travel', label: 'Travel Planner Agent' },
-      { value: 'hr', label: 'HR Assistant (Org Scoped)' },
-      { value: 'diet', label: 'Diet Planner Agent' },
-      { value: 'citation', label: 'Citation Finder Agent' },
-    ]
-  ), [])
-  const activeAgentLabel = agentOptions.find(option => option.value === agentValue)?.label ?? 'RAG Agent'
   const readyCount = documents.filter(d => d.status === 'ready').length
   const displayName =
     (user?.user_metadata?.full_name as string | undefined) ??
@@ -201,53 +190,7 @@ export function DocumentSelectionScreen({ onSelect }: Props) {
 
       {/* ── Header ─────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-10 border-b border-border/50 bg-background/80 backdrop-blur-md">
-        <div className="w-full px-6 h-16 flex items-center justify-start gap-4">
-          <div className="flex items-center gap-2">
-            <label htmlFor="agent-selector" className="text-xs text-muted-foreground">
-              Choose Your Agent:
-            </label>
-            <div className="relative">
-              <button
-                id="agent-selector"
-                type="button"
-                onClick={() => setAgentOpen(prev => !prev)}
-                className="h-9 min-w-[260px] rounded-xl border border-primary/40 bg-primary/10 px-3 text-sm text-foreground text-left shadow-sm shadow-primary/10 focus:outline-none focus:ring-2 focus:ring-primary/40"
-                aria-haspopup="listbox"
-                aria-expanded={agentOpen}
-              >
-                <span className="flex items-center justify-between gap-2">
-                  <span className="font-semibold">{activeAgentLabel}</span>
-                  <ChevronDown className={cn('w-4 h-4 text-primary transition-transform', agentOpen && 'rotate-180')} />
-                </span>
-              </button>
-              {agentOpen && (
-                <div
-                  role="listbox"
-                  className="absolute left-0 mt-2 w-full rounded-xl border border-border bg-popover shadow-xl z-20 overflow-hidden"
-                >
-                  {agentOptions.map(option => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      role="option"
-                      aria-selected={option.value === agentValue}
-                      onMouseDown={() => {
-                        setAgentValue(option.value)
-                        setAgentOpen(false)
-                      }}
-                      className={cn(
-                        'w-full text-left px-3 py-2.5 text-sm hover:bg-accent transition-colors',
-                        option.value === agentValue && 'bg-accent text-foreground'
-                      )}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
+        <div className="w-full px-6 h-16 flex items-center gap-4">
           <div className="ml-auto flex items-center gap-2">
             <button
               onClick={refresh}
@@ -255,24 +198,48 @@ export function DocumentSelectionScreen({ onSelect }: Props) {
             >
               <RefreshCw className="w-4 h-4" />
             </button>
+            <Button size="sm" variant="outline" className="gap-2 h-8 text-xs" disabled>
+              <Database className="w-3.5 h-3.5" />
+              Connect to DB
+            </Button>
             <Link href="/upload">
               <Button size="sm" className="gap-2 h-8 text-xs">
                 <Upload className="w-3.5 h-3.5" />
                 Upload
               </Button>
             </Link>
-            <div className="flex items-center gap-2 px-2 py-1 rounded-lg border border-border bg-card/60">
-              <div className="w-7 h-7 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center">
-                <User className="w-4 h-4 text-primary" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-xs font-medium text-foreground truncate max-w-[140px]">
-                  {displayName}
-                </p>
-                <p className="text-[10px] text-muted-foreground truncate max-w-[140px]">
-                  {user?.email ?? 'No email'}
-                </p>
-              </div>
+            {/* User info with sign-out dropdown */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setUserMenuOpen(prev => !prev)}
+                className="flex items-center gap-2 px-2 py-1 rounded-lg border border-border bg-card/60 hover:bg-accent transition-colors"
+              >
+                <div className="w-7 h-7 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center">
+                  <User className="w-4 h-4 text-primary" />
+                </div>
+                <div className="min-w-0 text-left">
+                  <p className="text-xs font-medium text-foreground truncate max-w-[140px]">
+                    {displayName}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground truncate max-w-[140px]">
+                    {user?.email ?? 'No email'}
+                  </p>
+                </div>
+                <ChevronDown className={cn('w-3.5 h-3.5 text-muted-foreground transition-transform', userMenuOpen && 'rotate-180')} />
+              </button>
+              {userMenuOpen && (
+                <div className="absolute right-0 mt-2 w-40 rounded-xl border border-border bg-popover shadow-xl z-20 overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => { setUserMenuOpen(false); signOut() }}
+                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-foreground hover:bg-accent transition-colors"
+                  >
+                    <LogOut className="w-3.5 h-3.5 text-muted-foreground" />
+                    Sign out
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
