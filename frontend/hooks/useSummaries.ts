@@ -1,11 +1,14 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useCallback, useEffect, useState } from 'react';
 import api from '@/lib/api';
 import { Summary } from '@/lib/types';
 
-interface SummariesResponse {
+interface UseSummariesReturn {
   summaries: Summary[];
+  loading: boolean;
+  error: string | null;
+  refresh: () => void;
 }
 
 interface UseSummariesOptions {
@@ -14,20 +17,40 @@ interface UseSummariesOptions {
   enabled?: boolean;
 }
 
-export function useSummaries({ conversation_id, document_id, enabled = true }: UseSummariesOptions) {
+export function useSummaries({
+  conversation_id,
+  document_id,
+  enabled = true,
+}: UseSummariesOptions): UseSummariesReturn {
+  const [summaries, setSummaries] = useState<Summary[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   const param = conversation_id
     ? `conversation_id=${conversation_id}`
     : document_id
     ? `document_id=${document_id}`
     : null;
 
-  return useQuery<Summary[]>({
-    queryKey: ['summaries', conversation_id ?? null, document_id ?? null],
-    queryFn: async () => {
-      const res = await api.get<SummariesResponse>(`/api/summaries?${param}`);
-      return res.data.summaries;
-    },
-    enabled: enabled && !!param,
-    staleTime: 1000 * 60 * 5,
-  });
+  const fetch = useCallback(async () => {
+    if (!param) return;
+    setLoading(true);
+    try {
+      const res = await api.get<{ summaries: Summary[] }>(`/api/summaries?${param}`);
+      setSummaries(res.data.summaries);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load summary');
+    } finally {
+      setLoading(false);
+    }
+  }, [param]);
+
+  useEffect(() => {
+    if (enabled && param) {
+      fetch();
+    }
+  }, [enabled, param, fetch]);
+
+  return { summaries, loading, error, refresh: fetch };
 }

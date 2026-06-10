@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import { useFlashcards } from '@/hooks/useFlashcards';
 import { useGenerate } from '@/hooks/useGenerate';
-import { useQueryClient } from '@tanstack/react-query';
 import { Flashcard } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -57,16 +56,15 @@ function FlipCard({ card }: { card: Flashcard }) {
 
 export function FlashcardDeckViewer({ conversationId, documentId }: FlashcardDeckViewerProps) {
   const [cardIndex, setCardIndex] = useState(0);
-  const queryClient = useQueryClient();
 
-  const { data: decks, isLoading: isFetching } = useFlashcards({
+  const { decks, loading: isFetching, refresh } = useFlashcards({
     conversation_id: conversationId,
     document_id: documentId,
   });
 
   const { generate, isLoading, isPolling } = useGenerate();
 
-  const deck  = decks?.[0] ?? null;
+  const deck  = decks[0] ?? null;
   const cards = deck?.cards ?? [];
   const isBusy = isLoading || isPolling;
 
@@ -82,9 +80,7 @@ export function FlashcardDeckViewer({ conversationId, documentId }: FlashcardDec
       });
 
       if (result?.status === 'done') {
-        await queryClient.invalidateQueries({
-          queryKey: ['flashcards', null, conversationId ?? null, documentId ?? null],
-        });
+        refresh();
         setCardIndex(0);
         toast.success(`${result.count ?? 0} flashcards generated`);
       } else if (result?.status === 'error') {
@@ -120,7 +116,7 @@ export function FlashcardDeckViewer({ conversationId, documentId }: FlashcardDec
 
       {/* Body */}
       {isFetching && (
-        <div className="px-4 pb-4 space-y-2">
+        <div className="px-4 pb-4">
           <Skeleton className="h-44 w-full bg-white/5 rounded-xl" />
         </div>
       )}
@@ -146,12 +142,7 @@ export function FlashcardDeckViewer({ conversationId, documentId }: FlashcardDec
 
           {/* Navigation */}
           <div className="flex items-center justify-between">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={prev}
-              disabled={cardIndex === 0}
-            >
+            <Button variant="ghost" size="icon-sm" onClick={prev} disabled={cardIndex === 0}>
               <ChevronLeft className="h-4 w-4 text-white/50" />
             </Button>
 
@@ -159,12 +150,7 @@ export function FlashcardDeckViewer({ conversationId, documentId }: FlashcardDec
               {cardIndex + 1} / {cards.length}
             </span>
 
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={next}
-              disabled={cardIndex === cards.length - 1}
-            >
+            <Button variant="ghost" size="icon-sm" onClick={next} disabled={cardIndex === cards.length - 1}>
               <ChevronRight className="h-4 w-4 text-white/50" />
             </Button>
           </div>

@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import { useSummaries } from '@/hooks/useSummaries';
 import { useGenerate } from '@/hooks/useGenerate';
-import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
@@ -17,16 +16,15 @@ interface SummaryPanelProps {
 
 export function SummaryPanel({ conversationId, documentId }: SummaryPanelProps) {
   const [expanded, setExpanded] = useState(false);
-  const queryClient = useQueryClient();
 
-  const { data: summaries, isLoading: isFetching } = useSummaries({
+  const { summaries, loading: isFetching, refresh } = useSummaries({
     conversation_id: conversationId,
     document_id: documentId,
   });
 
   const { generate, isLoading, isPolling } = useGenerate();
 
-  const summary = summaries?.[0] ?? null;
+  const summary = summaries[0] ?? null;
   const isBusy = isLoading || isPolling;
 
   async function handleGenerate() {
@@ -39,9 +37,7 @@ export function SummaryPanel({ conversationId, documentId }: SummaryPanelProps) 
       });
 
       if (result?.status === 'done') {
-        await queryClient.invalidateQueries({
-          queryKey: ['summaries', conversationId ?? null, documentId ?? null],
-        });
+        refresh();
         setExpanded(true);
         toast.success('Summary generated');
       } else if (result?.status === 'error') {
