@@ -21,3 +21,4 @@ CLAUDE.md
 .claude
 docs/
 docs/context.md
+infrastructure/secret.json

@@ -31,9 +31,25 @@ export function useMessages(conversationId: string | null): UseMessagesReturn {
 
     setLoading(true);
     try {
-      const data = await supabaseFetch<Message[]>(
+      const raw = await supabaseFetch<Message[]>(
         `messages?conversation_id=eq.${conversationId}&order=created_at.asc`
       );
+      const data = raw.map(msg => {
+        if (msg.role !== 'assistant' || msg.sources?.length || !msg.retrieved_chunks?.length) {
+          return msg;
+        }
+        return {
+          ...msg,
+          sources: msg.retrieved_chunks.map(c => ({
+            chunk_id:    c.id ?? null,
+            document_id: c.document_id ?? null,
+            page_number: c.page_number ?? null,
+            filename:    c.filename ?? '',
+            section:     c.section ?? null,
+            snippet:     c.content ?? '',
+          })),
+        };
+      });
       setMessages(prev => {
         // Preserve optimistic messages added before the DB has persisted them
         if (isNewConversation && data.length === 0 && prev.length > 0) return prev;
